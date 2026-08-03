@@ -1,5 +1,5 @@
 /****************************
- * RPC - CarrotInvoke 统一入口
+ * RPC - CarrotRPC 统一入口
  *
  * 使用方式：
  *   #include "rpc.h"

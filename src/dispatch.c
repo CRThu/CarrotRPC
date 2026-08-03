@@ -219,7 +219,7 @@ void dispatch_init(dispatch_registry_t* dispatcher)
 }
 
 dispatch_status_t _dispatch_add(dispatch_registry_t* dispatcher,
-                                const char* name, void* handler, const char* sig)
+                                const char* name, dispatch_handler_fn handler, const char* sig)
 {
     if (dispatcher == NULL || handler == NULL || sig == NULL)
         return DISPATCH_ERR_NULL;

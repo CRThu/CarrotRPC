@@ -1,5 +1,5 @@
 /****************************
- * RPC_CFG - CarrotInvoke 全局配置
+ * RPC_CFG - CarrotRPC 全局配置
  *
  * 统一管理所有模块的编译开关。
  * 也可通过 CMake 参数覆盖：-DRPC_xxx=1

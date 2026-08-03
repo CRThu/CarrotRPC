@@ -1,4 +1,4 @@
-# CarrotInvoke RPC 使用指南
+# CarrotRPC 使用指南
 
 ## 1. 即时执行（单条命令）
 

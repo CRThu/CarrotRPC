@@ -1,4 +1,4 @@
-## CarrotInvoke - 动态函数调用框架
+## CarrotRPC - 动态函数调用框架
 
 🌐 Language: [English](README.md) | [中文](README.zh-CN.md)
 
@@ -6,7 +6,7 @@
 
 ![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
 
-CarrotInvoke 是一个轻量级的 C 动态函数调用框架，适用于嵌入式 RPC 场景。通过零拷贝解析 DMA 缓冲区中的 ASCII 命令，自动调用预注册的函数。
+CarrotRPC 是一个轻量级的 C 动态函数调用框架，适用于嵌入式 RPC 场景。通过零拷贝解析 DMA 缓冲区中的 ASCII 命令，自动调用预注册的函数。
 
 ### 功能特性
 
@@ -49,7 +49,7 @@ CarrotInvoke 是一个轻量级的 C 动态函数调用框架，适用于嵌入�
 ### 目录结构
 
 ```
-CarrotInvoke/
+CarrotRPC/
 ├── inc/                 # 公开头文件
 │   ├── rpc.h            # 统一入口 (推荐使用)
 │   ├── rpc_cfg.h        # 全局配置 (编译开关集中管理)

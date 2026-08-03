@@ -63,10 +63,12 @@ typedef enum {
 /*=============================================================
  * 函数信息
  *=============================================================*/
+typedef void (*dispatch_handler_fn)(void);
+
 typedef struct {
     char         name[DISPATCH_FUNC_NAME_MAX];
     uint16_t     name_len;
-    void*        handler;
+    dispatch_handler_fn handler;
     uint8_t      ret_type;                   // dispatch_type_t
     uint8_t      args_type[DISPATCH_ARGS_MAX_CNT];
     uint8_t      args_count;
@@ -84,7 +86,7 @@ typedef struct {
  * 注册宏
  *=============================================================*/
 #define dispatch_reg(REG, HANDLER, SIG) \
-    _dispatch_add(REG, #HANDLER, (void*)(HANDLER), SIG)
+    _dispatch_add(REG, #HANDLER, (dispatch_handler_fn)(HANDLER), SIG)
 
 /*=============================================================
  * 公开 API
@@ -107,7 +109,7 @@ void dispatch_init(dispatch_registry_t* dispatcher);
  * @return dispatch_status_t
  */
 dispatch_status_t _dispatch_add(dispatch_registry_t* dispatcher,
-                                const char* name, void* handler, const char* sig);
+                                const char* name, dispatch_handler_fn handler, const char* sig);
 
 /**
  * @brief 查找函数

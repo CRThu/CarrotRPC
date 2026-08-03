@@ -1,4 +1,4 @@
-## CarrotInvoke - Dynamic Function Invocation Framework
+## CarrotRPC - Dynamic Function Invocation Framework
 
 🌐 Language: [English](README.md) | [中文](README.zh-CN.md)
 
@@ -6,7 +6,7 @@
 
 ![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
 
-CarrotInvoke is a lightweight C dynamic function invocation framework for embedded RPC scenarios. It parses ASCII commands from DMA buffers and invokes pre-registered functions with zero-copy parameter passing.
+CarrotRPC is a lightweight C dynamic function invocation framework for embedded RPC scenarios. It parses ASCII commands from DMA buffers and invokes pre-registered functions with zero-copy parameter passing.
 
 ### Features
 
@@ -49,7 +49,7 @@ Or via CMake: `-DRPC_LOG_ENABLE_DEBUG=0`
 ### Directory Structure
 
 ```
-CarrotInvoke/
+CarrotRPC/
 ├── inc/                 # Public headers
 │   ├── rpc.h            # Unified entry (recommended)
 │   ├── rpc_cfg.h        # Global configuration (compile switches)

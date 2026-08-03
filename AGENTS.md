@@ -1,8 +1,8 @@
-# CarrotInvoke - 项目架构指南
+# CarrotRPC - 项目架构指南
 
 ## 项目概述
 
-CarrotInvoke 是一个轻量级的 C 动态函数调用框架，用于通过字符串命令或参数池调用预注册的函数。常用于嵌入式 RPC 场景。
+CarrotRPC 是一个轻量级的 C 动态函数调用框架，用于通过字符串命令或参数池调用预注册的函数。常用于嵌入式 RPC 场景。
 
 ## 项目规则
 
@@ -316,10 +316,6 @@ build.bat demo     # 构建并运行 demo
 
 ## 文档
 
-详细使用指南请参考: [docs/rpc_usage.md](docs/rpc_usage.md)
-
-包含：
-- API 参考
-- 6 种使用场景（单条/队列/中断/返回值/签名/DMA）
-- DMA 集成指南（STM32 HAL / 轮询）
-- 常见问题
+- 详细使用指南请参考: [docs/rpc_usage.md](docs/rpc_usage.md)（含 API 参考、使用场景与 DMA 集成指南）
+- 最新协议通信手册 (v2.0) 请参考: [CARROT_RPC_v2.md](CARROT_RPC_v2.md)（纯固定 Tag 前缀 + 正交二维波形矩阵）
+- 传统协议通信手册 (v1.2.3) 请参考: [CARROT_RPC.md](CARROT_RPC.md)
