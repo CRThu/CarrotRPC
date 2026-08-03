@@ -6,6 +6,29 @@
 #include "ringbuf.h"
 #include <string.h>
 
+/*=============================================================
+ * 内部游标获取抽象 (优先使用 DMA 硬件位置读取函数)
+ *=============================================================*/
+static inline uint16_t get_head(const ringbuf_t* ring)
+{
+#ifdef RINGBUF_DMA
+    if (ring->head_reader) {
+        return ring->head_reader();
+    }
+#endif
+    return ring->head;
+}
+
+static inline uint16_t get_tail(const ringbuf_t* ring)
+{
+#ifdef RINGBUF_DMA
+    if (ring->tail_reader) {
+        return ring->tail_reader();
+    }
+#endif
+    return ring->tail;
+}
+
 void ringbuf_init(ringbuf_t* ring, uint8_t* buf, uint16_t size)
 {
     if (ring == NULL || buf == NULL || size == 0) return;
@@ -62,10 +85,13 @@ uint16_t ringbuf_readable(ringbuf_t* ring)
 {
     if (ring == NULL) return 0;
 
-    if (ring->head >= ring->tail)
-        return ring->head - ring->tail;
+    uint16_t head = get_head(ring);
+    uint16_t tail = get_tail(ring);
+
+    if (head >= tail)
+        return head - tail;
     else
-        return ring->size - ring->tail + ring->head;
+        return ring->size - tail + head;
 }
 
 uint16_t ringbuf_writable(ringbuf_t* ring)
@@ -82,15 +108,16 @@ uint16_t ringbuf_peek(ringbuf_t* ring, uint8_t* dst, uint16_t len)
     if (len > avail)
         len = avail;
 
-    uint16_t first = ring->size - ring->tail;
+    uint16_t tail = get_tail(ring);
+    uint16_t first = ring->size - tail;
 
     if (first >= len)
     {
-        memcpy(dst, &ring->buf[ring->tail], len);
+        memcpy(dst, &ring->buf[tail], len);
     }
     else
     {
-        memcpy(dst, &ring->buf[ring->tail], first);
+        memcpy(dst, &ring->buf[tail], first);
         memcpy(dst + first, &ring->buf[0], len - first);
     }
 
@@ -105,7 +132,26 @@ void ringbuf_skip(ringbuf_t* ring, uint16_t len)
     if (len > avail)
         len = avail;
 
-    ring->tail = (ring->tail + len) % ring->size;
+    uint16_t tail = get_tail(ring);
+
+#ifdef RINGBUF_DMA
+    if (!ring->tail_reader)
+#endif
+    {
+        ring->tail = (tail + len) % ring->size;
+    }
+}
+
+uint16_t ringbuf_read(ringbuf_t* ring, uint8_t* dst, uint16_t len)
+{
+    if (ring == NULL || dst == NULL) return 0;
+
+    uint16_t n = ringbuf_peek(ring, dst, len);
+    if (n > 0)
+    {
+        ringbuf_skip(ring, n);
+    }
+    return n;
 }
 
 uint16_t ringbuf_write(ringbuf_t* ring, const uint8_t* src, uint16_t len)
@@ -116,24 +162,37 @@ uint16_t ringbuf_write(ringbuf_t* ring, const uint8_t* src, uint16_t len)
     if (len > space)
         len = space;
 
-    uint16_t first = ring->size - ring->head;
+    uint16_t head = get_head(ring);
+    uint16_t first = ring->size - head;
 
     if (first >= len)
     {
-        memcpy(&ring->buf[ring->head], src, len);
+        memcpy(&ring->buf[head], src, len);
     }
     else
     {
-        memcpy(&ring->buf[ring->head], src, first);
+        memcpy(&ring->buf[head], src, first);
         memcpy(&ring->buf[0], src + first, len - first);
     }
 
-    ring->head = (ring->head + len) % ring->size;
+#ifdef RINGBUF_DMA
+    if (!ring->head_reader)
+#endif
+    {
+        ring->head = (head + len) % ring->size;
+    }
+
     return len;
 }
 
 void ringbuf_flush(ringbuf_t* ring)
 {
     if (ring == NULL) return;
-    ring->tail = ring->head;
+
+#ifdef RINGBUF_DMA
+    if (!ring->tail_reader)
+#endif
+    {
+        ring->tail = get_head(ring);
+    }
 }

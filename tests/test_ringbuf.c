@@ -183,6 +183,62 @@ void test_ringbuf_skip_wrap(void)
     TEST_ASSERT_EQUAL_UINT16(0, ringbuf_readable(&ring));
 }
 
+/* ===== read ===== */
+void test_ringbuf_read(void)
+{
+    ringbuf_init(&ring, ring_buf, sizeof(ring_buf));
+
+    uint8_t src[] = {1, 2, 3, 4, 5};
+    ringbuf_write(&ring, src, 5);
+
+    uint8_t dst[10] = {0};
+    uint16_t n = ringbuf_read(&ring, dst, 3);
+    TEST_ASSERT_EQUAL_UINT16(3, n);
+    TEST_ASSERT_EQUAL_UINT16(2, ringbuf_readable(&ring));
+    TEST_ASSERT_EQUAL_UINT8(1, dst[0]);
+    TEST_ASSERT_EQUAL_UINT8(2, dst[1]);
+    TEST_ASSERT_EQUAL_UINT8(3, dst[2]);
+}
+
+void test_ringbuf_read_wrap(void)
+{
+    ringbuf_init(&ring, ring_buf, sizeof(ring_buf));
+
+    ring.tail = 60;
+    memset(&ring_buf[60], 0xAA, 4);
+    memset(&ring_buf[0], 0xBB, 4);
+    ringbuf_set_head(&ring, 4);  /* 60->64 回绕 0->4, 共 8 字节 */
+
+    uint8_t dst[10] = {0};
+    uint16_t n = ringbuf_read(&ring, dst, 8);
+    TEST_ASSERT_EQUAL_UINT16(8, n);
+    TEST_ASSERT_EQUAL_UINT16(0, ringbuf_readable(&ring));
+    TEST_ASSERT_EQUAL_UINT8(0xAA, dst[0]);
+    TEST_ASSERT_EQUAL_UINT8(0xAA, dst[3]);
+    TEST_ASSERT_EQUAL_UINT8(0xBB, dst[4]);
+    TEST_ASSERT_EQUAL_UINT8(0xBB, dst[7]);
+}
+
+/* ===== empty and overflow bounds ===== */
+void test_ringbuf_empty_overflow(void)
+{
+    ringbuf_init(&ring, ring_buf, sizeof(ring_buf));
+
+    /* 空状态测试 */
+    uint8_t dst[5];
+    TEST_ASSERT_EQUAL_UINT16(0, ringbuf_read(&ring, dst, 5));
+    TEST_ASSERT_EQUAL_UINT16(0, ringbuf_peek(&ring, dst, 5));
+    ringbuf_skip(&ring, 5);
+    TEST_ASSERT_EQUAL_UINT16(0, ring.tail);
+
+    /* 满状态溢出写入测试 */
+    ring.head = 63;
+    ring.tail = 0;
+    TEST_ASSERT_EQUAL_UINT16(0, ringbuf_writable(&ring));
+    uint8_t src[] = {1, 2, 3};
+    TEST_ASSERT_EQUAL_UINT16(0, ringbuf_write(&ring, src, 3));
+}
+
 /* ===== flush ===== */
 void test_ringbuf_flush(void)
 {
@@ -198,19 +254,56 @@ void test_ringbuf_flush(void)
 
 /* ===== hw func ===== */
 #ifdef RINGBUF_DMA
-static volatile uint16_t test_hw_ndtr;
-static uint16_t test_get_head(void) { return 64 - test_hw_ndtr; }
+static volatile uint16_t test_rx_dma_ndtr;
+static volatile uint16_t test_tx_dma_ndtr;
 
-void test_ringbuf_dma_head(void)
+static uint16_t test_get_rx_head(void) { return 64 - test_rx_dma_ndtr; }
+static uint16_t test_get_tx_tail(void) { return 64 - test_tx_dma_ndtr; }
+
+void test_ringbuf_dma_rx_auto(void)
 {
     ringbuf_init(&ring, ring_buf, sizeof(ring_buf));
+    ringbuf_set_head_reader(&ring, test_get_rx_head);
 
-    ringbuf_set_head_reader(&ring, test_get_head);
-
-    test_hw_ndtr = 54;  /* DMA 写了 10 字节 */
-    ringbuf_sync_head(&ring);
-    TEST_ASSERT_EQUAL_UINT16(10, ring.head);
+    test_rx_dma_ndtr = 54;  /* RX DMA 写了 10 字节 */
     TEST_ASSERT_EQUAL_UINT16(10, ringbuf_readable(&ring));
+
+    test_rx_dma_ndtr = 40;  /* RX DMA 又写了 14 字节 (共 24) */
+    TEST_ASSERT_EQUAL_UINT16(24, ringbuf_readable(&ring));
+
+    ringbuf_skip(&ring, 10);
+    TEST_ASSERT_EQUAL_UINT16(14, ringbuf_readable(&ring));
+}
+
+void test_ringbuf_dma_tx_auto(void)
+{
+    ringbuf_init(&ring, ring_buf, sizeof(ring_buf));
+    ringbuf_set_tail_reader(&ring, test_get_tx_tail);
+
+    uint8_t data[20] = {0};
+    ringbuf_write(&ring, data, 20);
+    TEST_ASSERT_EQUAL_UINT16(20, ring.head);
+
+    test_tx_dma_ndtr = 64;  /* TX DMA 从 0 刚开始发 */
+    TEST_ASSERT_EQUAL_UINT16(20, ringbuf_readable(&ring));
+
+    test_tx_dma_ndtr = 54;  /* TX DMA 已由硬件发走 10 字节 */
+    TEST_ASSERT_EQUAL_UINT16(10, ringbuf_readable(&ring));
+    TEST_ASSERT_EQUAL_UINT16(53, ringbuf_writable(&ring));
+}
+
+void test_ringbuf_dma_rxtx_both(void)
+{
+    /* 双 DMA 硬件中转模式：同时挂载 head_reader (RX) 和 tail_reader (TX) */
+    ringbuf_init(&ring, ring_buf, sizeof(ring_buf));
+    ringbuf_set_head_reader(&ring, test_get_rx_head);
+    ringbuf_set_tail_reader(&ring, test_get_tx_tail);
+
+    test_rx_dma_ndtr = 44;  /* RX DMA 写入 20 字节 (head = 20) */
+    test_tx_dma_ndtr = 59;  /* TX DMA 消费发走 5 字节 (tail = 5) */
+
+    TEST_ASSERT_EQUAL_UINT16(15, ringbuf_readable(&ring));
+    TEST_ASSERT_EQUAL_UINT16(48, ringbuf_writable(&ring));
 }
 #endif
 
@@ -231,9 +324,14 @@ int run_ringbuf_tests(void)
     RUN_TEST(test_ringbuf_peek_wrap);
     RUN_TEST(test_ringbuf_skip);
     RUN_TEST(test_ringbuf_skip_wrap);
+    RUN_TEST(test_ringbuf_read);
+    RUN_TEST(test_ringbuf_read_wrap);
+    RUN_TEST(test_ringbuf_empty_overflow);
     RUN_TEST(test_ringbuf_flush);
 #ifdef RINGBUF_DMA
-    RUN_TEST(test_ringbuf_dma_head);
+    RUN_TEST(test_ringbuf_dma_rx_auto);
+    RUN_TEST(test_ringbuf_dma_tx_auto);
+    RUN_TEST(test_ringbuf_dma_rxtx_both);
 #endif
 
     return UnityEnd();
