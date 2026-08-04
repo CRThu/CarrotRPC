@@ -239,6 +239,62 @@ void test_cmd_zero_copy(void)
     TEST_ASSERT_TRUE(result.args[1].ptr >= buf && result.args[1].ptr < buf + strlen(buf));
 }
 
+/* ===== cmd_scan: 流式切片与粘包测试 ===== */
+
+void test_cmd_scan_streaming_chunked(void)
+{
+    /* 模拟 DMA 串口 2Mbps 高波特率下，add(10, 20)\r\n 分 3 批到达 */
+    cmd_scanner_t scanner;
+    cmd_entry_t entry;
+
+    /* 批次 1: 仅首字节 "a" */
+    uint8_t chunk1[] = "a";
+    cmd_init(&scanner, chunk1, 1);
+    TEST_ASSERT_EQUAL_INT(CMD_INCOMPLETE, cmd_scan(&scanner, &entry));
+    TEST_ASSERT_EQUAL_UINT16(0, scanner.scan_pos); /* 回退位置 */
+
+    /* 批次 2: 接收到前缀 "add(10" (尚无右括号及换行) */
+    uint8_t chunk2[] = "add(10";
+    cmd_init(&scanner, chunk2, 6);
+    TEST_ASSERT_EQUAL_INT(CMD_INCOMPLETE, cmd_scan(&scanner, &entry));
+    TEST_ASSERT_EQUAL_UINT16(0, scanner.scan_pos);
+
+    /* 批次 3: 完整帧到达 "add(10, 20)\r\n" */
+    uint8_t chunk3[] = "add(10, 20)\r\n";
+    cmd_init(&scanner, chunk3, sizeof(chunk3) - 1);
+    TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, cmd_scan(&scanner, &entry));
+    TEST_ASSERT_EQUAL_UINT16(0, entry.cmd_start);
+    TEST_ASSERT_EQUAL_UINT16(12, entry.cmd_len); /* "add(10, 20)\r" */
+    TEST_ASSERT_EQUAL_UINT8(3, entry.func_len);   /* "add" */
+}
+
+void test_cmd_scan_sticky_and_partial_packets(void)
+{
+    /* 粘包 + 未完成半包: "ping()\r\nadd(10, 20)\r\nhello" */
+    cmd_scanner_t scanner;
+    cmd_entry_t entry;
+
+    uint8_t buf[] = "ping()\r\nadd(10, 20)\r\nhello";
+    cmd_init(&scanner, buf, sizeof(buf) - 1);
+
+    /* 第 1 条完整包: ping() */
+    TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, cmd_scan(&scanner, &entry));
+    TEST_ASSERT_EQUAL_UINT16(0, entry.cmd_start);
+    TEST_ASSERT_EQUAL_UINT16(7, entry.cmd_len);
+    TEST_ASSERT_EQUAL_UINT8(4, entry.func_len);
+
+    /* 第 2 条完整包: add(10, 20) */
+    TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, cmd_scan(&scanner, &entry));
+    TEST_ASSERT_EQUAL_UINT16(8, entry.cmd_start);
+    TEST_ASSERT_EQUAL_UINT16(12, entry.cmd_len);
+    TEST_ASSERT_EQUAL_UINT8(3, entry.func_len);
+
+    /* 第 3 条未完整包: hello (缺少 \n) */
+    uint16_t pos_before = scanner.scan_pos;
+    TEST_ASSERT_EQUAL_INT(CMD_INCOMPLETE, cmd_scan(&scanner, &entry));
+    TEST_ASSERT_EQUAL_UINT16(pos_before, scanner.scan_pos); /* 位置重置回 hello 开头 */
+}
+
 /* ===== runner ===== */
 int run_cmdscan_tests(void)
 {
@@ -260,6 +316,8 @@ int run_cmdscan_tests(void)
     RUN_TEST(test_cmd_scan_multi_args_parens_semicolon);
     RUN_TEST(test_cmd_scan_multi_args_space);
     RUN_TEST(test_cmd_scan_multi_args_semicolon);
+    RUN_TEST(test_cmd_scan_streaming_chunked);
+    RUN_TEST(test_cmd_scan_sticky_and_partial_packets);
 
     /* cmd_parse */
     RUN_TEST(test_cmd_parse_no_args);

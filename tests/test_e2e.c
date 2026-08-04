@@ -18,7 +18,21 @@
 
 static dispatch_status_t parse_and_invoke(const char* cmd)
 {
+    if (cmd == NULL) return DISPATCH_ERR_NULL;
+
+    char buf[128];
     uint16_t len = (uint16_t)strlen(cmd);
+    if (len > 0 && cmd[len - 1] != '\n' && cmd[len - 1] != ';' && cmd[len - 1] != '(')
+    {
+        if (len < sizeof(buf) - 1)
+        {
+            memcpy(buf, cmd, len);
+            buf[len] = '\n';
+            buf[len + 1] = '\0';
+            len++;
+            cmd = buf;
+        }
+    }
 
     cmd_scanner_t scanner;
     cmd_init(&scanner, (const uint8_t*)cmd, len);

@@ -150,7 +150,8 @@ cmd_status_t cmd_scan(cmd_scanner_t* scanner, cmd_entry_t* entry)
                 scanner->scan_pos++;
             }
             /* 缓冲区结束，未找到终止符 */
-            entry->cmd_len = scanner->scan_pos - cmd_start;
+            scanner->scan_pos = cmd_start;
+            entry->cmd_len = 0;
             return CMD_INCOMPLETE;
         }
 
@@ -166,21 +167,28 @@ cmd_status_t cmd_scan(cmd_scanner_t* scanner, cmd_entry_t* entry)
                    !is_separator((char)scanner->buf[scanner->scan_pos]))
                 scanner->scan_pos++;
 
-            entry->cmd_len = scanner->scan_pos - cmd_start;
             if (scanner->scan_pos < scanner->buf_size)
+            {
+                entry->cmd_len = scanner->scan_pos - cmd_start;
                 scanner->scan_pos++; /* 跳过终止符/分隔符 */
-            return CMD_COMPLETE;
+                return CMD_COMPLETE;
+            }
+            else
+            {
+                /* 缓冲区结束，未找到终止符/分隔符 */
+                scanner->scan_pos = cmd_start;
+                entry->cmd_len = 0;
+                return CMD_INCOMPLETE;
+            }
         }
 
         scanner->scan_pos++;
     }
 
-    /* 缓冲区结束，未找到终止符 - 命令本身完整 */
-    entry->cmd_start = cmd_start;
-    entry->cmd_len = scanner->scan_pos - cmd_start;
-    if (entry->func_len == 0)
-        entry->func_len = entry->cmd_len;
-    return CMD_COMPLETE;
+    /* 缓冲区结束，未找到终止符 */
+    scanner->scan_pos = cmd_start;
+    entry->cmd_len = 0;
+    return CMD_INCOMPLETE;
 }
 
 /*=============================================================

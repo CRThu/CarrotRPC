@@ -52,8 +52,8 @@ void test_cmdqueue_push_pop_fifo(void)
     cmd_scanner_t scanner;
     cmd_entry_t entry1, entry2;
 
-    /* cmd_a\n cmd_b - 两条命令，每条 5 字符 + \n */
-    cmd_init(&scanner, (const uint8_t*)"cmd_a\ncmd_b", 11);
+    /* cmd_a\n cmd_b\n - 两条命令，每条 5 字符 + \n */
+    cmd_init(&scanner, (const uint8_t*)"cmd_a\ncmd_b\n", 12);
     cmd_scan(&scanner, &entry1);
     cmd_scan(&scanner, &entry2);
 
@@ -80,7 +80,7 @@ void test_cmdqueue_push_full(void)
     cmd_queue_init(&queue);
 
     cmd_scanner_t scanner;
-    cmd_init(&scanner, (const uint8_t*)"x", 1);
+    cmd_init(&scanner, (const uint8_t*)"x\n", 2);
 
     cmd_entry_t entry;
     cmd_scan(&scanner, &entry);
@@ -113,7 +113,7 @@ void test_cmdqueue_flush(void)
     cmd_queue_init(&queue);
 
     cmd_scanner_t scanner;
-    cmd_init(&scanner, (const uint8_t*)"test", 4);
+    cmd_init(&scanner, (const uint8_t*)"test\n", 5);
 
     cmd_entry_t entry;
     cmd_scan(&scanner, &entry);
@@ -136,7 +136,7 @@ void test_cmdqueue_check_found(void)
     cmd_scanner_t scanner;
     cmd_entry_t entry1, entry2;
 
-    cmd_init(&scanner, (const uint8_t*)"start\nstop", 10);
+    cmd_init(&scanner, (const uint8_t*)"start\nstop\n", 11);
     cmd_scan(&scanner, &entry1);
     cmd_scan(&scanner, &entry2);
 
@@ -159,7 +159,7 @@ void test_cmdqueue_check_partial_name(void)
     cmd_queue_init(&queue);
 
     cmd_scanner_t scanner;
-    cmd_init(&scanner, (const uint8_t*)"stop_all", 8);
+    cmd_init(&scanner, (const uint8_t*)"stop_all\n", 9);
 
     cmd_entry_t entry;
     cmd_scan(&scanner, &entry);
@@ -173,11 +173,11 @@ void test_cmdqueue_check_partial_name(void)
 void test_cmdqueue_func_len_match_cmdscan(void)
 {
     const char* test_cmds[] = {
-        "led_on(1)",
-        "stop",
-        "print 1 2",
-        "a;b;c",
-        "cmd_with_long_name(arg1, arg2)",
+        "led_on(1)\n",
+        "stop\n",
+        "print 1 2\n",
+        "a;b;c\n",
+        "cmd_with_long_name(arg1, arg2)\n",
     };
     uint8_t expected_func_len[] = {6, 4, 5, 1, 18};
 
