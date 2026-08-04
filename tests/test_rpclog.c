@@ -456,6 +456,27 @@ void test_rpc_reg_fmt_macro(void)
     TEST_ASSERT_EQUAL_STRING("[REG]: reg=add\r\n", cap_buf);
 }
 
+void test_rpc_log_str_with_tag(void)
+{
+    rpc_log_setUp();
+    rpc_log_str(RPC_LOG_INFO, "status", "ok");
+    TEST_ASSERT_EQUAL_STRING("[INFO]: status=ok\r\n", cap_buf);
+}
+
+void test_rpc_log_str_null_tag(void)
+{
+    rpc_log_setUp();
+    rpc_log_str(RPC_LOG_RETURN, NULL, "hello");
+    TEST_ASSERT_EQUAL_STRING("[RETURN]: hello\r\n", cap_buf);
+}
+
+void test_rpc_info_str_macro(void)
+{
+    rpc_log_setUp();
+    rpc_info_str("msg", "running");
+    TEST_ASSERT_EQUAL_STRING("[INFO]: msg=running\r\n", cap_buf);
+}
+
 /* ============================================================
  * GROUP 12: Level filtering (unified rpc_log)
  * ============================================================ */
@@ -522,6 +543,9 @@ int run_rpc_log_tests(void)
     RUN_TEST(test_rpc_log_f64_negative);
     RUN_TEST(test_rpc_log_f64_integer);
     RUN_TEST(test_rpc_info_f64_macro);
+    RUN_TEST(test_rpc_log_str_with_tag);
+    RUN_TEST(test_rpc_log_str_null_tag);
+    RUN_TEST(test_rpc_info_str_macro);
 
     /* fmt formatting */
     RUN_TEST(test_rpc_log_string);

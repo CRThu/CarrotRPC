@@ -42,4 +42,7 @@
  *=============================================================*/
 // #define INVOKE_STR_MAX_SIZE    64
 
+// 自动输出函数返回值 [RETURN]: <VALUE>（1=启用, 0=禁用）
+#define RPC_INVOKE_AUTO_RETURN  1
+
 #endif /* _RPC_CFG_H_ */

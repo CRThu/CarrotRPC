@@ -61,6 +61,9 @@ void cmd_init(cmd_scanner_t* scanner, const uint8_t* buf, uint16_t buf_size)
     scanner->buf = buf;
     scanner->buf_size = buf_size;
     scanner->scan_pos = 0;
+    scanner->cmd_start = 0;
+    scanner->func_len = 0;
+    scanner->state = CMD_STATE_IDLE;
 }
 
 void cmd_reset(cmd_scanner_t* scanner)
@@ -68,6 +71,9 @@ void cmd_reset(cmd_scanner_t* scanner)
     if (scanner == NULL) return;
 
     scanner->scan_pos = 0;
+    scanner->cmd_start = 0;
+    scanner->func_len = 0;
+    scanner->state = CMD_STATE_IDLE;
 }
 
 cmd_status_t cmd_scan(cmd_scanner_t* scanner, cmd_entry_t* entry)
@@ -81,113 +87,122 @@ cmd_status_t cmd_scan(cmd_scanner_t* scanner, cmd_entry_t* entry)
     entry->cmd_len = 0;
     entry->func_len = 0;
 
-    /* 跳过前导空白和终止符 */
     while (scanner->scan_pos < scanner->buf_size)
     {
         char c = (char)scanner->buf[scanner->scan_pos];
 
-        if (is_space(c) || is_terminator(c))
+        switch (scanner->state)
         {
-            scanner->scan_pos++;
-            continue;
-        }
-
-        break;
-    }
-
-    if (scanner->scan_pos >= scanner->buf_size)
-    {
-        return CMD_INCOMPLETE;
-    }
-
-    uint16_t cmd_start = scanner->scan_pos;
-
-    /* 扫描函数名 */
-    while (scanner->scan_pos < scanner->buf_size)
-    {
-        char c = (char)scanner->buf[scanner->scan_pos];
-
-        if (is_terminator(c) || is_separator(c))
-        {
-            /* 遇到终止符或分隔符，命令结束 */
-            entry->cmd_start = cmd_start;
-            entry->cmd_len = scanner->scan_pos - cmd_start;
-            entry->func_len = entry->cmd_len;
-            scanner->scan_pos++; /* 跳过终止符/分隔符 */
-            return CMD_COMPLETE;
-        }
-
-        if (is_left_bracket(c))
-        {
-            /* 遇到左括号，函数名结束 */
-            entry->cmd_start = cmd_start;
-            entry->func_len = scanner->scan_pos - cmd_start;
-
-            /* 扫描到右括号或终止符 */
-            scanner->scan_pos++; /* 跳过左括号 */
-            while (scanner->scan_pos < scanner->buf_size)
+        case CMD_STATE_IDLE:
+            /* 跳过前导空白、终止符与分隔符 */
+            if (is_space(c) || is_terminator(c) || is_separator(c))
             {
-                c = (char)scanner->buf[scanner->scan_pos];
-                if (is_terminator(c))
-                {
-                    entry->cmd_len = scanner->scan_pos - cmd_start;
-                    scanner->scan_pos++; /* 跳过终止符 */
-                    return CMD_COMPLETE;
-                }
-                if (is_right_bracket(c))
-                {
-                    scanner->scan_pos++;
-                    /* 继续扫描到终止符或分隔符 */
-                    while (scanner->scan_pos < scanner->buf_size &&
-                           !is_terminator((char)scanner->buf[scanner->scan_pos]) &&
-                           !is_separator((char)scanner->buf[scanner->scan_pos]))
-                        scanner->scan_pos++;
-                    entry->cmd_len = scanner->scan_pos - cmd_start;
-                    if (scanner->scan_pos < scanner->buf_size)
-                        scanner->scan_pos++; /* 跳过终止符/分隔符 */
-                    return CMD_COMPLETE;
-                }
+                scanner->scan_pos++;
+                break;
+            }
+            /* 遇到有效命令首字符 */
+            scanner->cmd_start = scanner->scan_pos;
+            scanner->func_len = 0;
+            scanner->state = CMD_STATE_FUNC_NAME;
+            break;
+
+        case CMD_STATE_FUNC_NAME:
+            if (is_terminator(c) || is_separator(c))
+            {
+                /* 无参无括号命令结束，例如 "print\n" 或 "print;" */
+                entry->cmd_start = scanner->cmd_start;
+                entry->cmd_len = scanner->scan_pos - scanner->cmd_start;
+                entry->func_len = (uint8_t)entry->cmd_len;
+                scanner->scan_pos++; /* 跳过终止符/分隔符 */
+                scanner->state = CMD_STATE_IDLE;
+                return CMD_COMPLETE;
+            }
+            else if (is_left_bracket(c))
+            {
+                /* 遇到 '('，锁定函数名长度并进入括号参数状态 */
+                scanner->func_len = (uint8_t)(scanner->scan_pos - scanner->cmd_start);
+                scanner->state = CMD_STATE_PAREN_ARGS;
                 scanner->scan_pos++;
             }
-            /* 缓冲区结束，未找到终止符 */
-            scanner->scan_pos = cmd_start;
-            entry->cmd_len = 0;
-            return CMD_INCOMPLETE;
-        }
-
-        if (is_space(c))
-        {
-            /* 遇到空白，函数名结束，无括号形式 */
-            entry->cmd_start = cmd_start;
-            entry->func_len = scanner->scan_pos - cmd_start;
-
-            /* 继续扫描到终止符、分隔符或缓冲区结束 */
-            while (scanner->scan_pos < scanner->buf_size &&
-                   !is_terminator((char)scanner->buf[scanner->scan_pos]) &&
-                   !is_separator((char)scanner->buf[scanner->scan_pos]))
-                scanner->scan_pos++;
-
-            if (scanner->scan_pos < scanner->buf_size)
+            else if (is_space(c))
             {
-                entry->cmd_len = scanner->scan_pos - cmd_start;
-                scanner->scan_pos++; /* 跳过终止符/分隔符 */
+                /* 遇到空格，锁定函数名长度并进入无括号参数状态 */
+                scanner->func_len = (uint8_t)(scanner->scan_pos - scanner->cmd_start);
+                scanner->state = CMD_STATE_SPACE_ARGS;
+                scanner->scan_pos++;
+            }
+            else
+            {
+                scanner->scan_pos++;
+            }
+            break;
+
+        case CMD_STATE_PAREN_ARGS:
+            if (is_terminator(c))
+            {
+                /* 未遇到右括号直接终止 */
+                entry->cmd_start = scanner->cmd_start;
+                entry->cmd_len = scanner->scan_pos - scanner->cmd_start;
+                entry->func_len = scanner->func_len;
+                scanner->scan_pos++; /* 跳过终止符 */
+                scanner->state = CMD_STATE_IDLE;
+                return CMD_COMPLETE;
+            }
+            else if (is_right_bracket(c))
+            {
+                /* 遇到右括号 ')'，带括号命令成帧完成 */
+                scanner->scan_pos++; /* 跳过 ')' */
+                entry->cmd_start = scanner->cmd_start;
+                entry->cmd_len = scanner->scan_pos - scanner->cmd_start;
+                entry->func_len = scanner->func_len;
+
+                /* 跳过尾随的分隔符、空白或终止符 */
+                while (scanner->scan_pos < scanner->buf_size)
+                {
+                    char c2 = (char)scanner->buf[scanner->scan_pos];
+                    if (is_terminator(c2) || is_separator(c2))
+                    {
+                        scanner->scan_pos++; /* 跳过终止符/分隔符 */
+                        break;
+                    }
+                    if (is_space(c2))
+                    {
+                        scanner->scan_pos++;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+
+                scanner->state = CMD_STATE_IDLE;
                 return CMD_COMPLETE;
             }
             else
             {
-                /* 缓冲区结束，未找到终止符/分隔符 */
-                scanner->scan_pos = cmd_start;
-                entry->cmd_len = 0;
-                return CMD_INCOMPLETE;
+                scanner->scan_pos++;
             }
-        }
+            break;
 
-        scanner->scan_pos++;
+        case CMD_STATE_SPACE_ARGS:
+            if (is_terminator(c) || is_separator(c))
+            {
+                entry->cmd_start = scanner->cmd_start;
+                entry->cmd_len = scanner->scan_pos - scanner->cmd_start;
+                entry->func_len = scanner->func_len;
+                scanner->scan_pos++; /* 跳过终止符/分隔符 */
+                scanner->state = CMD_STATE_IDLE;
+                return CMD_COMPLETE;
+            }
+            else
+            {
+                scanner->scan_pos++;
+            }
+            break;
+        }
     }
 
-    /* 缓冲区结束，未找到终止符 */
-    scanner->scan_pos = cmd_start;
-    entry->cmd_len = 0;
+    /* 缓冲区扫描完但数据未成帧，维持当前状态与位置 */
     return CMD_INCOMPLETE;
 }
 

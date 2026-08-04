@@ -159,6 +159,9 @@ dispatch_status_t invoke_call(dispatch_registry_t* reg,
         default:
             return DISPATCH_ERR_SIG;
         }
+#if RPC_INVOKE_AUTO_RETURN
+        rpc_log_i64(RPC_LOG_RETURN, NULL, r);
+#endif
         if (ret != NULL)
         {
             ret->type = INVOKERET_I64;
@@ -186,6 +189,9 @@ dispatch_status_t invoke_call(dispatch_registry_t* reg,
         default:
             return DISPATCH_ERR_SIG;
         }
+#if RPC_INVOKE_AUTO_RETURN
+        rpc_log_str(RPC_LOG_RETURN, NULL, r ? r : "");
+#endif
         if (ret != NULL)
         {
             ret->type = INVOKERET_STR;

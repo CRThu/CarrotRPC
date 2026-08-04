@@ -119,6 +119,12 @@ void rpc_log_hex(uint8_t level, const char* tag, uint64_t val);
  */
 void rpc_log_f64(uint8_t level, const char* tag, double val, uint8_t prec);
 
+/**
+ * @brief 字符串输出
+ * 输出格式: [LEVEL]: tag=str\r\n (tag 为 NULL 时只输出 [LEVEL]: str\r\n)
+ */
+void rpc_log_str(uint8_t level, const char* tag, const char* str);
+
 /*=============================================================
  * 便捷宏
  *=============================================================*/
@@ -161,11 +167,13 @@ void rpc_log_f64(uint8_t level, const char* tag, double val, uint8_t prec);
 #define rpc_debug_u64(tag, val)   rpc_log_u64(RPC_LOG_DEBUG, tag, val)
 #define rpc_debug_hex(tag, val)   rpc_log_hex(RPC_LOG_DEBUG, tag, val)
 #define rpc_debug_f64(tag, v, p)  rpc_log_f64(RPC_LOG_DEBUG, tag, v, p)
+#define rpc_debug_str(tag, str)   rpc_log_str(RPC_LOG_DEBUG, tag, str)
 #else
 #define rpc_debug_i64(tag, val)   ((void)0)
 #define rpc_debug_u64(tag, val)   ((void)0)
 #define rpc_debug_hex(tag, val)   ((void)0)
 #define rpc_debug_f64(tag, v, p)  ((void)0)
+#define rpc_debug_str(tag, str)   ((void)0)
 #endif
 
 #if RPC_LOG_ENABLE_INFO
@@ -173,11 +181,13 @@ void rpc_log_f64(uint8_t level, const char* tag, double val, uint8_t prec);
 #define rpc_info_u64(tag, val)    rpc_log_u64(RPC_LOG_INFO, tag, val)
 #define rpc_info_hex(tag, val)    rpc_log_hex(RPC_LOG_INFO, tag, val)
 #define rpc_info_f64(tag, v, p)   rpc_log_f64(RPC_LOG_INFO, tag, v, p)
+#define rpc_info_str(tag, str)    rpc_log_str(RPC_LOG_INFO, tag, str)
 #else
 #define rpc_info_i64(tag, val)    ((void)0)
 #define rpc_info_u64(tag, val)    ((void)0)
 #define rpc_info_hex(tag, val)    ((void)0)
 #define rpc_info_f64(tag, v, p)   ((void)0)
+#define rpc_info_str(tag, str)    ((void)0)
 #endif
 
 #if RPC_LOG_ENABLE_WARN
@@ -185,11 +195,13 @@ void rpc_log_f64(uint8_t level, const char* tag, double val, uint8_t prec);
 #define rpc_warn_u64(tag, val)    rpc_log_u64(RPC_LOG_WARN, tag, val)
 #define rpc_warn_hex(tag, val)    rpc_log_hex(RPC_LOG_WARN, tag, val)
 #define rpc_warn_f64(tag, v, p)   rpc_log_f64(RPC_LOG_WARN, tag, v, p)
+#define rpc_warn_str(tag, str)    rpc_log_str(RPC_LOG_WARN, tag, str)
 #else
 #define rpc_warn_i64(tag, val)    ((void)0)
 #define rpc_warn_u64(tag, val)    ((void)0)
 #define rpc_warn_hex(tag, val)    ((void)0)
 #define rpc_warn_f64(tag, v, p)   ((void)0)
+#define rpc_warn_str(tag, str)    ((void)0)
 #endif
 
 #if RPC_LOG_ENABLE_ERROR
@@ -197,11 +209,13 @@ void rpc_log_f64(uint8_t level, const char* tag, double val, uint8_t prec);
 #define rpc_error_u64(tag, val)   rpc_log_u64(RPC_LOG_ERROR, tag, val)
 #define rpc_error_hex(tag, val)   rpc_log_hex(RPC_LOG_ERROR, tag, val)
 #define rpc_error_f64(tag, v, p)  rpc_log_f64(RPC_LOG_ERROR, tag, v, p)
+#define rpc_error_str(tag, str)   rpc_log_str(RPC_LOG_ERROR, tag, str)
 #else
 #define rpc_error_i64(tag, val)   ((void)0)
 #define rpc_error_u64(tag, val)   ((void)0)
 #define rpc_error_hex(tag, val)   ((void)0)
 #define rpc_error_f64(tag, v, p)  ((void)0)
+#define rpc_error_str(tag, str)   ((void)0)
 #endif
 
 #ifdef __cplusplus

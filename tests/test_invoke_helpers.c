@@ -39,10 +39,12 @@ static void capture_hex(void* a)
 
 static int64_t capture_add(void* a, void* b)
 {
-    if (a) invoke_captured.add_a = *(int64_t*)a;
-    if (b) invoke_captured.add_b = *(int64_t*)b;
-    invoke_captured.add_ret = 0;
-    return 0;
+    int64_t va = a ? *(int64_t*)a : 0;
+    int64_t vb = b ? *(int64_t*)b : 0;
+    if (a) invoke_captured.add_a = va;
+    if (b) invoke_captured.add_b = vb;
+    invoke_captured.add_ret = va + vb;
+    return va + vb;
 }
 
 static void capture_string(void* a)

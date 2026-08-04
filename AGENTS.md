@@ -72,7 +72,8 @@ CarrotRPC 是一个轻量级的 C 动态函数调用框架，用于通过字符�
   #define DISPATCH_ARGS_MAX_CNT  9   // 单函数最大参数数
 
   /* invoke */
-  #define INVOKE_STR_MAX_SIZE    64  // 字符串返回值最大长度
+  #define INVOKE_STR_MAX_SIZE      64  // 字符串返回值最大长度
+  #define RPC_INVOKE_AUTO_RETURN  1   // 自动输出函数返回值 [RETURN]: <VALUE> (1=启用, 0=禁用)
   ```
 - **优先级**: CMake 参数 > rpc_cfg.h > 模块默认值
 
@@ -83,7 +84,8 @@ CarrotRPC 是一个轻量级的 C 动态函数调用框架，用于通过字符�
   - 扫描提取 + 零拷贝参数切分
   - 无 std 库依赖 - 纯嵌入式友好
 - **关键结构**:
-  - `cmd_scanner_t`: 扫描器上下文 (buf, buf_size, scan_pos)
+  - `cmd_scanner_t`: 扫描器上下文 (buf, buf_size, scan_pos, cmd_start, func_len, state)
+  - `cmd_scan_state_t`: 增量解析状态机状态 (CMD_STATE_IDLE, FUNC_NAME, PAREN_ARGS, SPACE_ARGS)
   - `cmd_entry_t`: 命令条目（扫描提取结果，含 buf 指针、cmd_start、cmd_len、func_len）
   - `cmd_args_t`: 参数切分结果（函数名指针 + 参数指针数组）
   - `cmd_arg_t`: 参数指针 (ptr + len)
@@ -235,7 +237,7 @@ CarrotRPC 是一个轻量级的 C 动态函数调用框架，用于通过字符�
   - 零 stdio 依赖 — 纯嵌入式友好
   - 两级级别：用户级别（可开关）+ 协议级别（始终输出）
   - 自实现格式化 (varargs)，支持 `%d %u %x %X %s %c %%`
-  - 类型安全输出：`rpc_log_i64` / `rpc_log_u64` / `rpc_log_hex` / `rpc_log_f64`
+  - 类型安全输出：`rpc_log_i64` / `rpc_log_u64` / `rpc_log_hex` / `rpc_log_f64` / `rpc_log_str`
   - 编译期二选一：字节模式 / 缓冲区模式 (`RPC_LOG_OUTPUT_BUF`)
 - **级别系统**:
   - 用户级别：DEBUG(0) / INFO(1) / WARN(2) / ERROR(3) — 可通过 `rpc_log_set_level` 过滤
@@ -246,6 +248,7 @@ CarrotRPC 是一个轻量级的 C 动态函数调用框架，用于通过字符�
   - `rpc_log_u64(level, tag, val)` — uint64 输出
   - `rpc_log_hex(level, tag, val)` — 十六进制输出 `[LEVEL]: tag=0xHEX\r\n`
   - `rpc_log_f64(level, tag, val, prec)` — 浮点数输出
+  - `rpc_log_str(level, tag, str)` — 字符串输出 `[LEVEL]: tag=str\r\n` (tag 为 NULL 时只输出 str)
   - `rpc_log_set_output(fn)` — 设置输出回调
   - `rpc_log_set_level(level)` — 设置全局最低用户级别
 - **便捷宏**:

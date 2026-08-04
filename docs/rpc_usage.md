@@ -208,6 +208,8 @@ dispatch_status_t s = invoke_call(&dispatcher, &result, &ret);
 if (s == DISPATCH_OK && ret.type == INVOKERET_I64) {
     printf("result: %ld\n", (long)ret.i64);  // result: 30
 }
+
+/* 开启 RPC_INVOKE_AUTO_RETURN 后，invoke_call 会自动通过 rpc_log 上报 [RETURN]: 30\r\n */
 ```
 
 ---

@@ -194,8 +194,11 @@ void rpc_log_i64(uint8_t level, const char* tag, int64_t val)
 
     char buf[24];
     rpc_log_put_level(level);
-    rpc_log_puts(tag);
-    rpc_log_putc('=');
+    if (tag != NULL && *tag != '\0')
+    {
+        rpc_log_puts(tag);
+        rpc_log_putc('=');
+    }
     typeconv_from_i64(val, buf, sizeof(buf));
     rpc_log_puts(buf);
     rpc_log_puts("\r\n");
@@ -208,8 +211,11 @@ void rpc_log_u64(uint8_t level, const char* tag, uint64_t val)
 
     char buf[24];
     rpc_log_put_level(level);
-    rpc_log_puts(tag);
-    rpc_log_putc('=');
+    if (tag != NULL && *tag != '\0')
+    {
+        rpc_log_puts(tag);
+        rpc_log_putc('=');
+    }
     typeconv_from_u64(val, buf, sizeof(buf));
     rpc_log_puts(buf);
     rpc_log_puts("\r\n");
@@ -222,8 +228,11 @@ void rpc_log_hex(uint8_t level, const char* tag, uint64_t val)
 
     char buf[24];
     rpc_log_put_level(level);
-    rpc_log_puts(tag);
-    rpc_log_putc('=');
+    if (tag != NULL && *tag != '\0')
+    {
+        rpc_log_puts(tag);
+        rpc_log_putc('=');
+    }
     typeconv_from_u64(val, buf, sizeof(buf));
     rpc_log_puts(buf);
     rpc_log_puts("\r\n");
@@ -236,10 +245,28 @@ void rpc_log_f64(uint8_t level, const char* tag, double val, uint8_t prec)
 
     char buf[32];
     rpc_log_put_level(level);
-    rpc_log_puts(tag);
-    rpc_log_putc('=');
+    if (tag != NULL && *tag != '\0')
+    {
+        rpc_log_puts(tag);
+        rpc_log_putc('=');
+    }
     typeconv_from_f64(val, buf, sizeof(buf), prec);
     rpc_log_puts(buf);
+    rpc_log_puts("\r\n");
+    rpc_log_flush();
+}
+
+void rpc_log_str(uint8_t level, const char* tag, const char* str)
+{
+    if (level <= RPC_LOG_ERROR && level < s_min_level) return;
+
+    rpc_log_put_level(level);
+    if (tag != NULL && *tag != '\0')
+    {
+        rpc_log_puts(tag);
+        rpc_log_putc('=');
+    }
+    rpc_log_puts(str ? str : "(null)");
     rpc_log_puts("\r\n");
     rpc_log_flush();
 }

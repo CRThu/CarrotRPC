@@ -12,6 +12,7 @@
 #include "cmdscan.h"
 #include "cmdqueue.h"
 #include "invoke.h"
+#include "rpclog.h"
 #include <string.h>
 
 /* ===== Helper: run full new pipeline ===== */
@@ -622,6 +623,69 @@ void test_e2e_two_commands_crlf(void)
     TEST_ASSERT_EQUAL_INT(2, invoke_mock_hello_fake.call_count);
 }
 
+void test_e2e_streaming_chunked_pipeline(void)
+{
+    /* 测试 DMA 流式切片追加完整管线: DMA -> cmdscan(增量) -> cmdqueue -> parse -> invoke */
+    invoke_test_helpers_reset();
+
+    cmd_scanner_t scanner;
+    cmd_queue_t queue;
+    cmd_queue_init(&queue);
+
+    uint8_t dma_buf[64] = {0};
+    cmd_init(&scanner, dma_buf, 0);
+
+    /* 批次 1: 追加 "add(" (4 字节) */
+    memcpy(dma_buf, "add(", 4);
+    scanner.buf_size = 4;
+
+    cmd_entry_t entry;
+    TEST_ASSERT_EQUAL_INT(CMD_INCOMPLETE, cmd_scan(&scanner, &entry));
+    TEST_ASSERT_TRUE(cmd_queue_is_empty(&queue));
+    TEST_ASSERT_EQUAL_INT(0, invoke_mock_add_fake.call_count);
+
+    /* 批次 2: 增量追加至 "add(10, " (8 字节) */
+    memcpy(dma_buf, "add(10, ", 8);
+    scanner.buf_size = 8;
+    TEST_ASSERT_EQUAL_INT(CMD_INCOMPLETE, cmd_scan(&scanner, &entry));
+    TEST_ASSERT_TRUE(cmd_queue_is_empty(&queue));
+    TEST_ASSERT_EQUAL_INT(0, invoke_mock_add_fake.call_count);
+
+    /* 批次 3: 补全完整命令 "add(10, 20)\r\n" (14 字节) */
+    memcpy(dma_buf, "add(10, 20)\r\n", 14);
+    scanner.buf_size = 14;
+    TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, cmd_scan(&scanner, &entry));
+
+    /* 入队 -> 出队 -> 解析 -> 调用 */
+    cmd_queue_push(&queue, &entry);
+    TEST_ASSERT_FALSE(cmd_queue_is_empty(&queue));
+
+    cmd_entry_t pop_entry;
+    cmd_queue_pop(&queue, &pop_entry);
+    cmd_args_t args;
+    cmd_parse((const char*)pop_entry.buf + pop_entry.cmd_start, pop_entry.cmd_len, &args);
+
+    invoke_ret_t ret;
+    dispatch_status_t status = invoke_call(&invoke_dispatcher, &args, &ret);
+    TEST_ASSERT_EQUAL_INT(DISPATCH_OK, status);
+    TEST_ASSERT_EQUAL_INT(1, invoke_mock_add_fake.call_count);
+    TEST_ASSERT_EQUAL_INT64(10, invoke_captured.add_a);
+    TEST_ASSERT_EQUAL_INT64(20, invoke_captured.add_b);
+
+    /* 批次 4: 紧接着在同一 buffer 末尾追加 "hello()\r\n" (23 字节) */
+    memcpy(dma_buf + 14, "hello()\r\n", 9);
+    scanner.buf_size = 23;
+    TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, cmd_scan(&scanner, &entry));
+
+    cmd_queue_push(&queue, &entry);
+    cmd_queue_pop(&queue, &pop_entry);
+    cmd_parse((const char*)pop_entry.buf + pop_entry.cmd_start, pop_entry.cmd_len, &args);
+
+    status = invoke_call(&invoke_dispatcher, &args, &ret);
+    TEST_ASSERT_EQUAL_INT(DISPATCH_OK, status);
+    TEST_ASSERT_EQUAL_INT(1, invoke_mock_hello_fake.call_count);
+}
+
 /* =================================================================
  * GROUP 10: dispatch_init test
  * ================================================================= */
@@ -645,6 +709,65 @@ void test_e2e_reset_allows_re_register(void)
 
     dispatch_func_t* f = dispatch_find(&invoke_dispatcher, "hello", 5);
     TEST_ASSERT_NOT_NULL(f);
+}
+
+/* =================================================================
+ * GROUP 11: Auto Return [RETURN] Log Output
+ * ================================================================= */
+
+static char g_log_buf[256];
+static uint16_t g_log_pos = 0;
+
+static void log_capture_char(char c)
+{
+    if (g_log_pos < sizeof(g_log_buf) - 1)
+    {
+        g_log_buf[g_log_pos++] = c;
+        g_log_buf[g_log_pos] = '\0';
+    }
+}
+
+static void reset_log_capture(void)
+{
+    memset(g_log_buf, 0, sizeof(g_log_buf));
+    g_log_pos = 0;
+    rpc_log_set_output(log_capture_char);
+}
+
+void test_e2e_auto_return_i64(void)
+{
+    invoke_test_helpers_reset();
+    reset_log_capture();
+
+    dispatch_status_t s = parse_and_invoke("add(10,20)");
+    TEST_ASSERT_EQUAL_INT(DISPATCH_OK, s);
+    TEST_ASSERT_EQUAL_STRING("[RETURN]: 30\r\n", g_log_buf);
+}
+
+static char* mock_echo(void* a)
+{
+    return (char*)a;
+}
+
+void test_e2e_auto_return_str(void)
+{
+    invoke_test_helpers_reset();
+    dispatch_reg(&invoke_dispatcher, mock_echo, "echo(s) -> s");
+    reset_log_capture();
+
+    dispatch_status_t s = parse_and_invoke("echo(world)");
+    TEST_ASSERT_EQUAL_INT(DISPATCH_OK, s);
+    TEST_ASSERT_EQUAL_STRING("[RETURN]: world\r\n", g_log_buf);
+}
+
+void test_e2e_auto_return_none(void)
+{
+    invoke_test_helpers_reset();
+    reset_log_capture();
+
+    dispatch_status_t s = parse_and_invoke("hello()");
+    TEST_ASSERT_EQUAL_INT(DISPATCH_OK, s);
+    TEST_ASSERT_EQUAL_STRING("", g_log_buf);
 }
 
 /* =================================================================
@@ -731,10 +854,16 @@ int run_e2e_tests(void)
     /* Group 9: Multi-command */
     RUN_TEST(test_e2e_two_commands_lf);
     RUN_TEST(test_e2e_two_commands_crlf);
+    RUN_TEST(test_e2e_streaming_chunked_pipeline);
 
     /* Group 10: Reset */
     RUN_TEST(test_e2e_reset_clears_registry);
     RUN_TEST(test_e2e_reset_allows_re_register);
+
+    /* Group 11: Auto Return */
+    RUN_TEST(test_e2e_auto_return_i64);
+    RUN_TEST(test_e2e_auto_return_str);
+    RUN_TEST(test_e2e_auto_return_none);
 
     return UNITY_END();
 }

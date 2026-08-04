@@ -239,33 +239,61 @@ void test_cmd_zero_copy(void)
     TEST_ASSERT_TRUE(result.args[1].ptr >= buf && result.args[1].ptr < buf + strlen(buf));
 }
 
-/* ===== cmd_scan: 流式切片与粘包测试 ===== */
+/* ===== cmd_scan: 流式增量切片与粘包测试 ===== */
 
 void test_cmd_scan_streaming_chunked(void)
 {
-    /* 模拟 DMA 串口 2Mbps 高波特率下，add(10, 20)\r\n 分 3 批到达 */
+    /* 模拟 DMA 串口 2Mbps 高波特率下，add(10, 20)\r\n 分 3 批到达 (同一缓冲区 buf_size 递增) */
     cmd_scanner_t scanner;
     cmd_entry_t entry;
 
-    /* 批次 1: 仅首字节 "a" */
-    uint8_t chunk1[] = "a";
-    cmd_init(&scanner, chunk1, 1);
-    TEST_ASSERT_EQUAL_INT(CMD_INCOMPLETE, cmd_scan(&scanner, &entry));
-    TEST_ASSERT_EQUAL_UINT16(0, scanner.scan_pos); /* 回退位置 */
+    uint8_t buf[32] = "add(10, 20)\r\n";
 
-    /* 批次 2: 接收到前缀 "add(10" (尚无右括号及换行) */
-    uint8_t chunk2[] = "add(10";
-    cmd_init(&scanner, chunk2, 6);
+    /* 批次 1: 仅首字节 "a" (buf_size = 1) */
+    cmd_init(&scanner, buf, 1);
     TEST_ASSERT_EQUAL_INT(CMD_INCOMPLETE, cmd_scan(&scanner, &entry));
-    TEST_ASSERT_EQUAL_UINT16(0, scanner.scan_pos);
+    TEST_ASSERT_EQUAL_UINT16(1, scanner.scan_pos); /* 不回退，推进到 1 */
 
-    /* 批次 3: 完整帧到达 "add(10, 20)\r\n" */
-    uint8_t chunk3[] = "add(10, 20)\r\n";
-    cmd_init(&scanner, chunk3, sizeof(chunk3) - 1);
+    /* 批次 2: 接收增量追加至 "add(10" (buf_size = 6) */
+    scanner.buf_size = 6;
+    TEST_ASSERT_EQUAL_INT(CMD_INCOMPLETE, cmd_scan(&scanner, &entry));
+    TEST_ASSERT_EQUAL_UINT16(6, scanner.scan_pos); /* 不回退，推进到 6 */
+
+    /* 批次 3: 完整帧到达 "add(10, 20)\r\n" (buf_size = 13) */
+    scanner.buf_size = 13;
     TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, cmd_scan(&scanner, &entry));
     TEST_ASSERT_EQUAL_UINT16(0, entry.cmd_start);
-    TEST_ASSERT_EQUAL_UINT16(12, entry.cmd_len); /* "add(10, 20)\r" */
+    TEST_ASSERT_EQUAL_UINT16(11, entry.cmd_len); /* "add(10, 20)" 精准长度 11 */
     TEST_ASSERT_EQUAL_UINT8(3, entry.func_len);   /* "add" */
+}
+
+void test_cmd_scan_byte_by_byte(void)
+{
+    /* 逐字节增量扫描测试 O(N) */
+    cmd_scanner_t scanner;
+    cmd_entry_t entry;
+
+    uint8_t buf[] = "set_led(1, 2)\n";
+    uint16_t total_len = sizeof(buf) - 1; /* 14 */
+
+    cmd_init(&scanner, buf, 0);
+
+    /* 逐字节增加 buf_size 并扫描，直到遇到右括号 ')' 前均为 CMD_INCOMPLETE */
+    for (uint16_t size = 1; size < 13; size++)
+    {
+        scanner.buf_size = size;
+        cmd_status_t s = cmd_scan(&scanner, &entry);
+        TEST_ASSERT_EQUAL_INT(CMD_INCOMPLETE, s);
+        TEST_ASSERT_EQUAL_UINT16(size, scanner.scan_pos); /* 单向递增 */
+    }
+
+    /* 当 buf_size 抵达包含 ')' 的 13 字节时，命令成帧成 COMPLETE */
+    scanner.buf_size = total_len;
+    cmd_status_t s = cmd_scan(&scanner, &entry);
+    TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, s);
+    TEST_ASSERT_EQUAL_UINT16(0, entry.cmd_start);
+    TEST_ASSERT_EQUAL_UINT16(13, entry.cmd_len); /* "set_led(1, 2)" */
+    TEST_ASSERT_EQUAL_UINT8(7, entry.func_len);  /* "set_led" */
 }
 
 void test_cmd_scan_sticky_and_partial_packets(void)
@@ -274,25 +302,34 @@ void test_cmd_scan_sticky_and_partial_packets(void)
     cmd_scanner_t scanner;
     cmd_entry_t entry;
 
-    uint8_t buf[] = "ping()\r\nadd(10, 20)\r\nhello";
-    cmd_init(&scanner, buf, sizeof(buf) - 1);
+    uint8_t buf[64] = "ping()\r\nadd(10, 20)\r\nhello";
+    cmd_init(&scanner, buf, 26);
 
     /* 第 1 条完整包: ping() */
     TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, cmd_scan(&scanner, &entry));
     TEST_ASSERT_EQUAL_UINT16(0, entry.cmd_start);
-    TEST_ASSERT_EQUAL_UINT16(7, entry.cmd_len);
+    TEST_ASSERT_EQUAL_UINT16(6, entry.cmd_len);  /* "ping()" 精准长度 6 */
     TEST_ASSERT_EQUAL_UINT8(4, entry.func_len);
 
     /* 第 2 条完整包: add(10, 20) */
     TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, cmd_scan(&scanner, &entry));
     TEST_ASSERT_EQUAL_UINT16(8, entry.cmd_start);
-    TEST_ASSERT_EQUAL_UINT16(12, entry.cmd_len);
+    TEST_ASSERT_EQUAL_UINT16(11, entry.cmd_len); /* "add(10, 20)" 精准长度 11 */
     TEST_ASSERT_EQUAL_UINT8(3, entry.func_len);
 
-    /* 第 3 条未完整包: hello (缺少 \n) */
-    uint16_t pos_before = scanner.scan_pos;
+    /* 第 3 条未完整包: hello (尚无 \n) */
     TEST_ASSERT_EQUAL_INT(CMD_INCOMPLETE, cmd_scan(&scanner, &entry));
-    TEST_ASSERT_EQUAL_UINT16(pos_before, scanner.scan_pos); /* 位置重置回 hello 开头 */
+    TEST_ASSERT_EQUAL_UINT16(26, scanner.scan_pos); /* 不回退 */
+
+    /* 缓冲区中追加 \n 并递增 buf_size 到 27 */
+    buf[26] = '\n';
+    scanner.buf_size = 27;
+
+    /* 再次调用 cmd_scan，成功解析出第 3 条完整包 */
+    TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, cmd_scan(&scanner, &entry));
+    TEST_ASSERT_EQUAL_UINT16(21, entry.cmd_start);
+    TEST_ASSERT_EQUAL_UINT16(5, entry.cmd_len);  /* "hello" */
+    TEST_ASSERT_EQUAL_UINT8(5, entry.func_len);  /* "hello" */
 }
 
 /* ===== runner ===== */
@@ -317,6 +354,7 @@ int run_cmdscan_tests(void)
     RUN_TEST(test_cmd_scan_multi_args_space);
     RUN_TEST(test_cmd_scan_multi_args_semicolon);
     RUN_TEST(test_cmd_scan_streaming_chunked);
+    RUN_TEST(test_cmd_scan_byte_by_byte);
     RUN_TEST(test_cmd_scan_sticky_and_partial_packets);
 
     /* cmd_parse */

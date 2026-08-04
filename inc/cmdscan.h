@@ -37,12 +37,24 @@ typedef enum
     CMD_ERROR = -2          /* 格式错误 */
 } cmd_status_t;
 
+/* 增量解析状态 */
+typedef enum
+{
+    CMD_STATE_IDLE = 0,        /* 等待新命令起始（跳过前导空白/换行） */
+    CMD_STATE_FUNC_NAME,       /* 正在扫描函数名 */
+    CMD_STATE_PAREN_ARGS,      /* 正在扫描括号内参数 func(...) */
+    CMD_STATE_SPACE_ARGS       /* 正在扫描无括号参数 func arg1 arg2 */
+} cmd_scan_state_t;
+
 /* 扫描器上下文 - 适配 DMA 增量接收 */
 typedef struct
 {
-    const uint8_t* buf;     /* 缓冲区指针 */
-    uint16_t buf_size;      /* 缓冲区总大小 */
-    uint16_t scan_pos;      /* 当前扫描位置 */
+    const uint8_t* buf;       /* 缓冲区指针 */
+    uint16_t buf_size;        /* 缓冲区总大小 */
+    uint16_t scan_pos;        /* 当前增量扫描指针 (只进不退) */
+    uint16_t cmd_start;       /* 当前正在扫描命令的起点 */
+    uint8_t  func_len;        /* 已锁定的函数名长度 */
+    cmd_scan_state_t state;   /* 增量解析状态机状态 */
 } cmd_scanner_t;
 
 /* 命令条目 - 扫描提取结果，用于入队 */
