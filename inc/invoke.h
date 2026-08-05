@@ -22,12 +22,12 @@ extern "C"
 #include "cmdscan.h"
 #include "rpc_cfg.h"
 
-/*=============================================================
- * 常量（保留默认值，允许用户在 rpc_config.h 或 CMake 覆盖）
- *=============================================================*/
-#ifndef INVOKE_STR_MAX_SIZE
-#define INVOKE_STR_MAX_SIZE  64
-#endif
+/**
+ * @brief 库内置统一字符串返回共享缓冲区 (避免 handler 内返回局部栈指针引发悬空指针)
+ */
+extern char g_rpc_str_ret_buf[INVOKE_STR_MAX_SIZE];
+
+#define RPC_STR_RET_BUF g_rpc_str_ret_buf
 
 /*=============================================================
  * 返回值类型

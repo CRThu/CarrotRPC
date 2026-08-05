@@ -19,6 +19,7 @@ extern "C"
 #endif
 
 #include <inttypes.h>
+#include "ringbuf.h"
 
 #define CMD_MAX_ARGS                    10
 
@@ -55,6 +56,7 @@ typedef struct
     uint16_t cmd_start;       /* 当前正在扫描命令的起点 */
     uint8_t  func_len;        /* 已锁定的函数名长度 */
     cmd_scan_state_t state;   /* 增量解析状态机状态 */
+    ringbuf_t* ring;          /* 可选绑定的环形缓冲区指针 (NULL 表示线性 buf) */
 } cmd_scanner_t;
 
 /* 命令条目 - 扫描提取结果，用于入队 */
@@ -82,12 +84,19 @@ typedef struct
  *=============================================================*/
 
 /**
- * @brief 初始化扫描器
+ * @brief 初始化线性缓冲区扫描器
  * @param scanner 扫描器上下文
  * @param buf 缓冲区指针
  * @param buf_size 缓冲区大小
  */
 void cmd_init(cmd_scanner_t* scanner, const uint8_t* buf, uint16_t buf_size);
+
+/**
+ * @brief 初始化环形缓冲区扫描器 (无缝支持 ringbuf 自动消费)
+ * @param scanner 扫描器上下文
+ * @param ring    绑定的环形缓冲区指针
+ */
+void cmd_init_ringbuf(cmd_scanner_t* scanner, ringbuf_t* ring);
 
 /**
  * @brief 重置扫描器到初始状态
@@ -100,27 +109,11 @@ void cmd_reset(cmd_scanner_t* scanner);
  *
  * 从 scanner 当前扫描位置提取单条命令的边界信息
  * 可连续扫描多条命令，scanner 自动记录位置
+ * 若绑定了 ringbuf，扫描到完整命令后会自动从 ringbuf 消费已被成帧的字节
  *
- * 使用方法：
- * 1. 调用 cmd_init() 初始化 scanner
- * 2. 循环调用 cmd_scan() 获取每条命令
- * 3. 返回 CMD_COMPLETE 表示找到完整命令
- * 4. 返回 CMD_INCOMPLETE 表示缓冲区扫描完毕
- *
- * @param scanner 扫描器上下文（需要先调用 cmd_init）
- * @param entry 输出：命令条目（含 buf 指针和位置信息）
+ * @param scanner 扫描器上下文
+ * @param entry 输出：命令条目
  * @return cmd_status_t 扫描结果
- *
- * 示例：
- * @code
- * cmd_scanner_t scanner;
- * cmd_init(&scanner, dma_buf, dma_len);
- *
- * cmd_entry_t entry;
- * while (cmd_scan(&scanner, &entry) == CMD_COMPLETE) {
- *     cmd_queue_push(&queue, &entry);
- * }
- * @endcode
  */
 cmd_status_t cmd_scan(cmd_scanner_t* scanner, cmd_entry_t* entry);
 

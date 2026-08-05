@@ -28,26 +28,6 @@ extern "C"
 #include "rpc_cfg.h"
 
 /*=============================================================
- * 编译期配置（保留默认值，允许 rpc_config.h 覆盖）
- *=============================================================*/
-
-#ifndef RPC_LOG_ENABLE_DEBUG
-#define RPC_LOG_ENABLE_DEBUG    1
-#endif
-
-#ifndef RPC_LOG_ENABLE_INFO
-#define RPC_LOG_ENABLE_INFO     1
-#endif
-
-#ifndef RPC_LOG_ENABLE_WARN
-#define RPC_LOG_ENABLE_WARN     1
-#endif
-
-#ifndef RPC_LOG_ENABLE_ERROR
-#define RPC_LOG_ENABLE_ERROR    1
-#endif
-
-/*=============================================================
  * 日志级别
  *=============================================================*/
 
@@ -66,7 +46,7 @@ extern "C"
  * 输出回调（编译期二选一）
  *=============================================================*/
 
-#ifdef RPC_LOG_OUTPUT_BUF
+#if RPC_LOG_OUTPUT_BUF
 typedef void (*rpc_log_out_fn)(const char* buf, uint16_t len);
 #else
 typedef void (*rpc_log_out_fn)(char c);

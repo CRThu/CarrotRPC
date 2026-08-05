@@ -23,11 +23,12 @@ static void invoke_setUp(void)
 
 static dispatch_status_t run_pipeline(const char* buf, uint16_t len)
 {
+    static uint8_t inv_q_buf[2048];
     cmd_scanner_t scanner;
     cmd_init(&scanner, (const uint8_t*)buf, len);
 
     cmd_queue_t queue;
-    cmd_queue_init(&queue);
+    cmd_queue_init(&queue, inv_q_buf, sizeof(inv_q_buf));
 
     cmd_entry_t entry;
     while (cmd_scan(&scanner, &entry) == CMD_COMPLETE)

@@ -18,7 +18,7 @@ static rpc_log_out_fn s_out_fn = NULL;
 static uint8_t s_min_level = RPC_LOG_DEBUG;
 
 /* 缓冲区模式内部缓冲 */
-#ifdef RPC_LOG_OUTPUT_BUF
+#if RPC_LOG_OUTPUT_BUF
 #define RPC_LOG_BUF_SIZE 128
 static char s_buf[RPC_LOG_BUF_SIZE];
 static uint16_t s_buf_pos = 0;
@@ -32,7 +32,7 @@ static void rpc_log_putc(char c)
 {
     if (s_out_fn == NULL) return;
 
-#ifdef RPC_LOG_OUTPUT_BUF
+#if RPC_LOG_OUTPUT_BUF
     if (s_buf_pos < RPC_LOG_BUF_SIZE)
     {
         s_buf[s_buf_pos++] = c;
@@ -59,7 +59,7 @@ static void rpc_log_puts(const char* s)
 
 static void rpc_log_flush(void)
 {
-#ifdef RPC_LOG_OUTPUT_BUF
+#if RPC_LOG_OUTPUT_BUF
     if (s_buf_pos > 0 && s_out_fn != NULL)
     {
         s_out_fn(s_buf, s_buf_pos);

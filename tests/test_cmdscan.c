@@ -4,6 +4,7 @@
 #include "unity.h"
 #include "test_helpers.h"
 #include "cmdscan.h"
+#include "ringbuf.h"
 #include <string.h>
 
 /* ===== cmd_init ===== */
@@ -370,5 +371,34 @@ int run_cmdscan_tests(void)
     /* 零拷贝 */
     RUN_TEST(test_cmd_zero_copy);
 
+    /* ringbuf 扫描 */
+    void test_cmdscan_ringbuf_basic(void);
+    RUN_TEST(test_cmdscan_ringbuf_basic);
+
     return UnityEnd();
+}
+
+/* ===== ringbuf 原生扫描用例 ===== */
+static ringbuf_t s_ring;
+static uint8_t s_ring_buf[64];
+static cmd_scanner_t s_ring_scanner;
+
+void test_cmdscan_ringbuf_basic(void)
+{
+    ringbuf_init(&s_ring, s_ring_buf, sizeof(s_ring_buf));
+    cmd_init_ringbuf(&s_ring_scanner, &s_ring);
+
+    const char* str = "hello(123)\n";
+    ringbuf_write(&s_ring, (const uint8_t*)str, strlen(str));
+
+    cmd_entry_t entry;
+    cmd_status_t st = cmd_scan(&s_ring_scanner, &entry);
+    TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, st);
+    TEST_ASSERT_EQUAL_UINT16(10, entry.cmd_len);
+
+    cmd_args_t args;
+    uint8_t count = cmd_parse((const char*)entry.buf + entry.cmd_start, entry.cmd_len, &args);
+    TEST_ASSERT_EQUAL_UINT8(1, count);
+    TEST_ASSERT_EQUAL_UINT16(5, args.func_name_len);
+    TEST_ASSERT_EQUAL_UINT16(3, args.args[0].len);
 }

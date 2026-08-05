@@ -1,18 +1,13 @@
-/****************************
-* CMD QUEUE - 命令队列
-* CRTHu
-* 2025.07.15
-*****************************/
 #include "cmdqueue.h"
 #include <string.h>
 
-static uint8_t queue_buf[CMD_QUEUE_BUF_SIZE];
+#if RPC_USE_CMD_QUEUE
 
-void cmd_queue_init(cmd_queue_t* queue)
+void cmd_queue_init(cmd_queue_t* queue, uint8_t* buf, uint16_t buf_size)
 {
-    if (queue == NULL) return;
+    if (queue == NULL || buf == NULL || buf_size == 0) return;
 
-    ringbuf_init(&queue->ring, queue_buf, CMD_QUEUE_BUF_SIZE);
+    ringbuf_init(&queue->ring, buf, buf_size);
     queue->head = 0;
     queue->tail = 0;
     queue->count = 0;
@@ -40,8 +35,8 @@ cmd_queue_status_t cmd_queue_push(cmd_queue_t* queue, cmd_entry_t* entry)
 
     cmd_entry_t* item = &queue->items[queue->tail];
     item->buf = queue->ring.buf;
-    item->buf_len = CMD_QUEUE_BUF_SIZE;
-    item->cmd_start = (queue->ring.head - entry->cmd_len + CMD_QUEUE_BUF_SIZE) % CMD_QUEUE_BUF_SIZE;
+    item->buf_len = queue->ring.size;
+    item->cmd_start = (queue->ring.head - entry->cmd_len + queue->ring.size) % queue->ring.size;
     item->cmd_len = entry->cmd_len;
     item->func_len = entry->func_len;
 
@@ -119,7 +114,7 @@ uint8_t cmd_queue_check(cmd_queue_t* queue, const char* func_name)
                 uint8_t match = 1;
                 for (uint8_t j = 0; j < fn_len; j++)
                 {
-                    uint16_t pos = (item->cmd_start + j) % CMD_QUEUE_BUF_SIZE;
+                    uint16_t pos = (item->cmd_start + j) % queue->ring.size;
                     if (item->buf[pos] != func_name[j])
                     {
                         match = 0;
@@ -137,3 +132,5 @@ uint8_t cmd_queue_check(cmd_queue_t* queue, const char* func_name)
 
     return 0;
 }
+
+#endif /* RPC_USE_CMD_QUEUE */

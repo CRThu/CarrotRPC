@@ -24,9 +24,15 @@ extern int run_invoke_tests(void);
 extern int run_e2e_tests(void);
 extern int run_rpc_log_tests(void);
 
+#include "rpc.h"
+
 int main(void)
 {
     int failures = 0;
+
+    printf("\n========================================\n");
+    printf("  CarrotRPC v%s Test Suite Started\n", CARROT_RPC_VERSION_STR);
+    printf("========================================\n");
 
     printf("\n========== E2E Tests ==========\n");
     failures += run_e2e_tests();

@@ -23,20 +23,14 @@ extern "C"
 #include "cmdscan.h"
 #include "ringbuf.h"
 
+#if RPC_USE_CMD_QUEUE
+
 /* 队列状态码 */
 typedef enum {
     CMDQUEUE_OK = 0,
     CMDQUEUE_ERR_NULL,      /* 空指针 */
     CMDQUEUE_ERR_FULL,      /* 队列满 / 缓冲区不足 */
 } cmd_queue_status_t;
-
-/* 保留默认值，允许用户在 rpc_config.h 或 CMake 覆盖 */
-#ifndef CMD_QUEUE_SIZE
-#define CMD_QUEUE_SIZE              128
-#endif
-#ifndef CMD_QUEUE_BUF_SIZE
-#define CMD_QUEUE_BUF_SIZE          2048
-#endif
 
 /* 命令队列 */
 typedef struct
@@ -49,9 +43,12 @@ typedef struct
 } cmd_queue_t;
 
 /**
- * @brief 初始化命令队列
+ * @brief 初始化命令队列 (缓冲区由外部传入，消除硬编码静态 RAM 占用)
+ * @param queue 队列指针
+ * @param buf 外部缓冲区指针
+ * @param buf_size 外部缓冲区字节数
  */
-void cmd_queue_init(cmd_queue_t* queue);
+void cmd_queue_init(cmd_queue_t* queue, uint8_t* buf, uint16_t buf_size);
 
 /**
  * @brief 命令入队（复制原始命令到 buf）
@@ -96,6 +93,8 @@ void cmd_queue_flush(cmd_queue_t* queue);
  * @return 1 找到，0 未找到
  */
 uint8_t cmd_queue_check(cmd_queue_t* queue, const char* func_name);
+
+#endif /* RPC_USE_CMD_QUEUE */
 
 #ifdef __cplusplus
 }

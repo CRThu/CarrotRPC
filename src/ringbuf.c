@@ -11,7 +11,7 @@
  *=============================================================*/
 static inline uint16_t get_head(const ringbuf_t* ring)
 {
-#ifdef RINGBUF_DMA
+#if RINGBUF_DMA
     if (ring->head_reader) {
         return ring->head_reader();
     }
@@ -21,7 +21,7 @@ static inline uint16_t get_head(const ringbuf_t* ring)
 
 static inline uint16_t get_tail(const ringbuf_t* ring)
 {
-#ifdef RINGBUF_DMA
+#if RINGBUF_DMA
     if (ring->tail_reader) {
         return ring->tail_reader();
     }
@@ -37,13 +37,15 @@ void ringbuf_init(ringbuf_t* ring, uint8_t* buf, uint16_t size)
     ring->size = size;
     ring->head = 0;
     ring->tail = 0;
-#ifdef RINGBUF_DMA
+#if RINGBUF_DMA
     ring->head_reader = NULL;
     ring->tail_reader = NULL;
+    ring->tx_busy = 0;
+    ring->tx_last_len = 0;
 #endif
 }
 
-#ifdef RINGBUF_DMA
+#if RINGBUF_DMA
 void ringbuf_set_head_reader(ringbuf_t* ring, uint16_t (*func)(void))
 {
     if (ring == NULL) return;
@@ -66,6 +68,62 @@ void ringbuf_sync_tail(ringbuf_t* ring)
 {
     if (ring == NULL || ring->tail_reader == NULL) return;
     ring->tail = ring->tail_reader();
+}
+
+uint8_t ringbuf_dma_tx_fetch(ringbuf_t* ring, const uint8_t** ptr, uint16_t* len)
+{
+    if (ring == NULL || ptr == NULL || len == NULL)
+        return 0;
+
+    if (ring->tx_busy)
+        return 0;
+
+    uint16_t readable = ringbuf_readable(ring);
+    if (readable == 0)
+        return 0;
+
+    uint16_t head = get_head(ring);
+    uint16_t tail = get_tail(ring);
+
+    uint16_t contiguous;
+    if (head >= tail)
+    {
+        contiguous = head - tail;
+    }
+    else
+    {
+        contiguous = ring->size - tail;
+    }
+
+    if (contiguous == 0)
+        return 0;
+
+    *ptr = &ring->buf[tail];
+    *len = contiguous;
+    ring->tx_last_len = contiguous;
+    ring->tx_busy = 1;
+    return 1;
+}
+
+uint8_t ringbuf_dma_tx_complete(ringbuf_t* ring, const uint8_t** next_ptr, uint16_t* next_len)
+{
+    if (ring == NULL)
+        return 0;
+
+    if (ring->tx_last_len > 0)
+    {
+        ringbuf_skip(ring, ring->tx_last_len);
+        ring->tx_last_len = 0;
+    }
+
+    ring->tx_busy = 0;
+
+    if (next_ptr != NULL && next_len != NULL)
+    {
+        return ringbuf_dma_tx_fetch(ring, next_ptr, next_len);
+    }
+
+    return 0;
 }
 #endif
 
@@ -134,7 +192,7 @@ void ringbuf_skip(ringbuf_t* ring, uint16_t len)
 
     uint16_t tail = get_tail(ring);
 
-#ifdef RINGBUF_DMA
+#if RINGBUF_DMA
     if (!ring->tail_reader)
 #endif
     {
@@ -175,7 +233,7 @@ uint16_t ringbuf_write(ringbuf_t* ring, const uint8_t* src, uint16_t len)
         memcpy(&ring->buf[0], src + first, len - first);
     }
 
-#ifdef RINGBUF_DMA
+#if RINGBUF_DMA
     if (!ring->head_reader)
 #endif
     {
@@ -189,7 +247,7 @@ void ringbuf_flush(ringbuf_t* ring)
 {
     if (ring == NULL) return;
 
-#ifdef RINGBUF_DMA
+#if RINGBUF_DMA
     if (!ring->tail_reader)
 #endif
     {

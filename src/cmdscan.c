@@ -5,6 +5,7 @@
 *****************************/
 #include "cmdscan.h"
 #include <stddef.h>
+#include <string.h>
 
 /*=============================================================
  * 内部辅助函数（无 std 库依赖）
@@ -64,14 +65,28 @@ void cmd_init(cmd_scanner_t* scanner, const uint8_t* buf, uint16_t buf_size)
     scanner->cmd_start = 0;
     scanner->func_len = 0;
     scanner->state = CMD_STATE_IDLE;
+    scanner->ring = NULL;
+}
+
+void cmd_init_ringbuf(cmd_scanner_t* scanner, ringbuf_t* ring)
+{
+    if (scanner == NULL) return;
+
+    scanner->ring = ring;
+    scanner->buf = (ring != NULL) ? ring->buf : NULL;
+    scanner->buf_size = (ring != NULL) ? ring->size : 0;
+    scanner->scan_pos = (ring != NULL) ? ring->tail : 0;
+    scanner->cmd_start = scanner->scan_pos;
+    scanner->func_len = 0;
+    scanner->state = CMD_STATE_IDLE;
 }
 
 void cmd_reset(cmd_scanner_t* scanner)
 {
     if (scanner == NULL) return;
 
-    scanner->scan_pos = 0;
-    scanner->cmd_start = 0;
+    scanner->scan_pos = (scanner->ring != NULL) ? scanner->ring->tail : 0;
+    scanner->cmd_start = scanner->scan_pos;
     scanner->func_len = 0;
     scanner->state = CMD_STATE_IDLE;
 }
@@ -407,3 +422,5 @@ uint8_t cmd_parse(const char* cmd, uint16_t len, cmd_args_t* args)
     args->args_count = arg_idx;
     return arg_idx;
 }
+
+

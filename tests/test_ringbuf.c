@@ -17,7 +17,7 @@ void test_ringbuf_init(void)
     TEST_ASSERT_EQUAL_UINT16(0, ring.tail);
     TEST_ASSERT_EQUAL_UINT16(0, ringbuf_readable(&ring));
     TEST_ASSERT_EQUAL_UINT16(63, ringbuf_writable(&ring));
-#ifdef RINGBUF_DMA
+#if RINGBUF_DMA
     TEST_ASSERT_NULL(ring.head_reader);
     TEST_ASSERT_NULL(ring.tail_reader);
 #endif
@@ -253,7 +253,7 @@ void test_ringbuf_flush(void)
 }
 
 /* ===== hw func ===== */
-#ifdef RINGBUF_DMA
+#if RINGBUF_DMA
 static volatile uint16_t test_rx_dma_ndtr;
 static volatile uint16_t test_tx_dma_ndtr;
 
@@ -305,6 +305,31 @@ void test_ringbuf_dma_rxtx_both(void)
     TEST_ASSERT_EQUAL_UINT16(15, ringbuf_readable(&ring));
     TEST_ASSERT_EQUAL_UINT16(48, ringbuf_writable(&ring));
 }
+
+void test_ringbuf_dma_tx_fetch_complete(void)
+{
+    ringbuf_init(&ring, ring_buf, sizeof(ring_buf));
+    uint8_t data[] = "Hello DMA World!";
+    ringbuf_write(&ring, data, 16);
+
+    const uint8_t* ptr = NULL;
+    uint16_t len = 0;
+
+    uint8_t res = ringbuf_dma_tx_fetch(&ring, &ptr, &len);
+    TEST_ASSERT_EQUAL_UINT8(1, res);
+    TEST_ASSERT_EQUAL_PTR(&ring_buf[0], ptr);
+    TEST_ASSERT_EQUAL_UINT16(16, len);
+
+    const uint8_t* ptr2 = NULL;
+    uint16_t len2 = 0;
+    TEST_ASSERT_EQUAL_UINT8(0, ringbuf_dma_tx_fetch(&ring, &ptr2, &len2));
+
+    const uint8_t* next_ptr = NULL;
+    uint16_t next_len = 0;
+    uint8_t has_next = ringbuf_dma_tx_complete(&ring, &next_ptr, &next_len);
+    TEST_ASSERT_EQUAL_UINT8(0, has_next);
+    TEST_ASSERT_EQUAL_UINT16(0, ringbuf_readable(&ring));
+}
 #endif
 
 /* ===== runner ===== */
@@ -328,10 +353,11 @@ int run_ringbuf_tests(void)
     RUN_TEST(test_ringbuf_read_wrap);
     RUN_TEST(test_ringbuf_empty_overflow);
     RUN_TEST(test_ringbuf_flush);
-#ifdef RINGBUF_DMA
+#if RINGBUF_DMA
     RUN_TEST(test_ringbuf_dma_rx_auto);
     RUN_TEST(test_ringbuf_dma_tx_auto);
     RUN_TEST(test_ringbuf_dma_rxtx_both);
+    RUN_TEST(test_ringbuf_dma_tx_fetch_complete);
 #endif
 
     return UnityEnd();

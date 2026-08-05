@@ -25,7 +25,7 @@ static void cap_putc(char c)
         cap_buf[cap_pos++] = c;
 }
 
-#ifdef RPC_LOG_OUTPUT_BUF
+#if RPC_LOG_OUTPUT_BUF
 static void cap_buf_out(const char* buf, uint16_t len)
 {
     uint16_t to_write = len;
@@ -39,7 +39,7 @@ static void cap_buf_out(const char* buf, uint16_t len)
 static void rpc_log_setUp(void)
 {
     cap_reset();
-#ifdef RPC_LOG_OUTPUT_BUF
+#if RPC_LOG_OUTPUT_BUF
     rpc_log_set_output(cap_buf_out);
 #else
     rpc_log_set_output(cap_putc);

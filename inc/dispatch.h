@@ -26,19 +26,6 @@ extern "C"
 #include "rpc_cfg.h"
 
 /*=============================================================
- * 常量（保留默认值，允许用户在 rpc_config.h 或 CMake 覆盖）
- *=============================================================*/
-#ifndef DISPATCH_MAX_FUNC_CNT
-#define DISPATCH_MAX_FUNC_CNT   64
-#endif
-#ifndef DISPATCH_ARGS_MAX_CNT
-#define DISPATCH_ARGS_MAX_CNT   9
-#endif
-#ifndef DISPATCH_FUNC_NAME_MAX
-#define DISPATCH_FUNC_NAME_MAX  32
-#endif
-
-/*=============================================================
  * 状态码
  *=============================================================*/
 typedef enum {

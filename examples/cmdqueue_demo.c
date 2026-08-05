@@ -33,13 +33,15 @@ void long_running_task(cmd_queue_t* queue)
  * 主程序
  *=============================================================*/
 
+static uint8_t queue_buf_storage[2048];
+
 int main(void)
 {
     printf("CMD QUEUE 命令队列示例\r\n");
     printf("========================\r\n\r\n");
 
     cmd_queue_t queue;
-    cmd_queue_init(&queue);
+    cmd_queue_init(&queue, queue_buf_storage, sizeof(queue_buf_storage));
 
     /* --- 示例1: cmd_scan + cmd_queue 流程 --- */
     printf("=== 示例1: scan + queue 流程 ===\r\n");

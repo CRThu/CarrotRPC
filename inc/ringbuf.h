@@ -25,11 +25,6 @@ extern "C"
 #include <inttypes.h>
 #include "rpc_cfg.h"
 
-/* 保留默认值，允许用户在 rpc_config.h 或 CMake 覆盖 */
-#ifndef RINGBUF_DMA
-// #define RINGBUF_DMA
-#endif
-
 typedef struct
 {
     uint8_t* buf;
@@ -37,10 +32,14 @@ typedef struct
     uint16_t head;              /* 写游标 */
     uint16_t tail;              /* 读游标 */
 
-#ifdef RINGBUF_DMA
+#if RINGBUF_DMA
     /* 可选: 硬件位置读取函数 */
     uint16_t (*head_reader)(void);  /* DMA RX: 读硬件写位置 */
     uint16_t (*tail_reader)(void);  /* DMA TX: 读硬件读位置 */
+
+    /* 极简 DMA TX 状态机字段 */
+    uint8_t  tx_busy;               /* 1: DMA 传输中, 0: 空闲 */
+    uint16_t tx_last_len;           /* 上次提交传输的字节数 */
 #endif
 } ringbuf_t;
 
@@ -49,7 +48,7 @@ typedef struct
  */
 void ringbuf_init(ringbuf_t* ring, uint8_t* buf, uint16_t size);
 
-#ifdef RINGBUF_DMA
+#if RINGBUF_DMA
 /**
  * @brief 设置硬件位置读取函数
  *
@@ -68,6 +67,28 @@ void ringbuf_set_tail_reader(ringbuf_t* ring, uint16_t (*tail_reader)(void));
  */
 void ringbuf_sync_head(ringbuf_t* ring);
 void ringbuf_sync_tail(ringbuf_t* ring);
+
+/**
+ * @brief 极简 DMA TX 状态机: 尝试提取一段可直接传给 DMA 的连续内存切片
+ *
+ * 自动处理回绕截断与繁忙锁控
+ *
+ * @param ring 环形缓冲区指针
+ * @param ptr [OUT] 传出连续内存切片的起始指针
+ * @param len [OUT] 传出连续切片的字节数
+ * @return 1 成功提取待发送切片, 0 繁忙或无数据
+ */
+uint8_t ringbuf_dma_tx_fetch(ringbuf_t* ring, const uint8_t** ptr, uint16_t* len);
+
+/**
+ * @brief 极简 DMA TX 状态机: 在 DMA 完成 TC 中断里提交上次发送，并探查是否链式续发
+ *
+ * @param ring 环形缓冲区指针
+ * @param next_ptr [OUT] 传出下一段连续内存切片指针
+ * @param next_len [OUT] 传出下一段连续切片字节数
+ * @return 1 有后续切片需要链式续发，0 无后续切片已释放 busy 状态
+ */
+uint8_t ringbuf_dma_tx_complete(ringbuf_t* ring, const uint8_t** next_ptr, uint16_t* next_len);
 #endif
 
 /**

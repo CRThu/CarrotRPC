@@ -33,6 +33,7 @@ CarrotRPC 是一个轻量级的 C 动态函数调用框架，适用于嵌入式 
 #define RPC_LOG_OUTPUT_BUF       // 启用缓冲区输出模式
 
 /* cmdqueue */
+#define RPC_USE_CMD_QUEUE   1    // 启用命令队列 (1=启用, 0=未启用且 0 RAM 占用)
 #define CMD_QUEUE_SIZE      128  // 队列容量
 #define CMD_QUEUE_BUF_SIZE  2048 // 队列缓冲区大小
 
@@ -103,11 +104,51 @@ dispatch_status_t s = invoke_call(&dispatcher, &args, &ret);
 // ret.i64 == 30
 ```
 
-### 调用管线
+### 签名格式与注册类型
 
-```
-DMA 缓冲区 → cmd_scan → cmd_queue → cmd_parse → dispatch + invoke → 函数执行
-```
+函数使用易读的字符串签名格式注册：`"函数名(参数类型...) -> 返回类型"`。
+
+| 类型字符 | C 语言对应类型 | 签名示例 | 说明 |
+|-----------|-------------------|-------------------|-------------|
+| `v` | `void` | `"hello()"` | 无参数，void 返回 |
+| `i` / `i64` | `int64_t` | `"add(i, i) -> i"` | 64 位有符号整数 |
+| `u` / `u64` | `uint64_t` | `"hex(u) -> u"` | 64 位无符号整数 |
+| `s` | `char*` | `"echo(s) -> s"` | 字符串指针 |
+| `f` / `f64` | `double` | `"pi() -> f"` | 64 位双精度浮点数 |
+
+* 省略 `->` 默认为 void 返回：`"proc(s, i)"` 等价于 `"proc(s, i) -> v"`。
+
+### 核心 API 参考
+
+#### `cmdscan` (零拷贝命令解析器)
+* `cmd_init(scanner, buf, size)` / `cmd_init_ringbuf(scanner, ring)`：初始化线性/环形缓冲区扫描器上下文。
+* `cmd_scan(scanner, &entry)`：扫描单条命令边界（支持线性/环形 buf，成帧后自动从 ringbuf 消费已处理数据）。
+* `cmd_parse(cmd, len, &args)`：将命令字符串解析为参数指针数组（零拷贝）。
+
+#### `cmdqueue` (命令队列)
+* `cmd_queue_init(queue, buf, buf_size)`：使用外部传入内存缓冲区初始化队列。
+* `cmd_queue_push(queue, &entry)` / `cmd_queue_pop(queue, &entry)`：命令条目入队与出队。
+* `cmd_queue_check(queue, func_name)`：协作式扫描检查高优先级/中断命令。
+
+#### `ringbuf` (环形缓冲区与 DMA TX 状态机)
+* `ringbuf_init(ring, buf, size)`：初始化环形缓冲区。
+* `ringbuf_set_head_reader(ring, func)` / `ringbuf_set_tail_reader(ring, func)`：绑定硬件 DMA 读写指针获取函数。
+* `ringbuf_dma_tx_fetch(ring, &ptr, &len)`：轮询提取连续 DMA TX 发送切片。
+* `ringbuf_dma_tx_complete(ring, &next_ptr, &next_len)`：DMA TC 中断提交并探查跨边界链式续发。
+
+#### `dispatch` & `invoke` (调度执行引擎)
+* `dispatch_init(reg)`：重置注册表。
+* `dispatch_reg(reg, handler, "sig")`：注册带签名的函数。
+* `dispatch_find(reg, name, len)`：长度限定的函数查找。
+* `invoke_call(reg, &args, &ret)`：零拷贝调度执行引擎（合并 64 位暂存结构）。
+
+#### `typeconv` (纯值双向转换)
+* `typeconv_to_i64(str, len)` / `typeconv_to_u64(str, len)` / `typeconv_to_f64(str, len)`：字符串 -> 数值 API（底层采用单路 64 位无失真二进制解析算法）。
+* `typeconv_from_i64(val, buf, size)` / `typeconv_from_u64(val, buf, size)` / `typeconv_from_f64(val, buf, size, prec)`：数值 -> 字符串 API。
+
+#### `rpclog` (分级日志)
+* `rpc_info(...)` / `rpc_error(...)` / `rpc_debug(...)` / `rpc_warning(...)`：用户级别日志宏。
+* `rpc_return(...)` / `rpc_data(...)` / `rpc_reg(...)`：协议级别日志宏。
 
 ### 构建
 
@@ -126,10 +167,6 @@ cmake -B build
 cmake --build build
 ./build/carrot_tests
 ```
-
-### 测试
-
-222 个测试，覆盖 8 个测试套件：e2e、cmdscan、cmdqueue、ringbuf、typeconv、dispatch、invoke、rpc_log。
 
 ### 许可证
 

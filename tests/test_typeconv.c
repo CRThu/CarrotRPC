@@ -76,6 +76,12 @@ void test_typeconv_u64_long_hex(void)
     TEST_ASSERT_EQUAL_HEX64(0xFFFFFFFFFFFFFFFFULL, val);
 }
 
+void test_typeconv_u64_max_decimal(void)
+{
+    uint64_t val = typeconv_to_u64("18446744073709551615", 20);
+    TEST_ASSERT_EQUAL_HEX64(0xFFFFFFFFFFFFFFFFULL, val);
+}
+
 /* ===== from_i64 ===== */
 
 void test_typeconv_from_i64_positive(void)
@@ -195,7 +201,7 @@ void test_typeconv_from_f64_zero(void)
 void test_typeconv_from_f64_small(void)
 {
     char buf[32];
-    uint16_t len = typeconv_from_f64(0.005, buf, sizeof(buf), 6);
+    typeconv_from_f64(0.005, buf, sizeof(buf), 6);
     TEST_ASSERT_EQUAL_STRING("0.005", buf);
 }
 
@@ -305,6 +311,7 @@ int run_typeconv_tests(void)
     RUN_TEST(test_typeconv_u64_zero);
     RUN_TEST(test_typeconv_u64_uppercase_prefix);
     RUN_TEST(test_typeconv_u64_long_hex);
+    RUN_TEST(test_typeconv_u64_max_decimal);
 
     /* from_i64 */
     RUN_TEST(test_typeconv_from_i64_positive);

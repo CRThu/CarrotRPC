@@ -11,54 +11,91 @@
  * 字符串 -> 类型化值
  *=============================================================*/
 
-int64_t typeconv_to_i64(const char* str, uint16_t len)
+static uint64_t parse_raw64(const char* str, uint16_t len, int is_signed)
 {
-    int64_t result = 0;
-    int64_t sign = 1;
-    uint16_t i = 0;
+    if (str == NULL || len == 0)
+        return 0;
 
-    if (i < len && str[i] == '-')
+    uint16_t i = 0;
+    int negative = 0;
+
+    if (is_signed && i < len && str[i] == '-')
     {
-        sign = -1;
+        negative = 1;
         i++;
     }
 
-    for (; i < len; i++)
+    int is_hex = 0;
+    if (len - i >= 2 && str[i] == '0' && (str[i + 1] == 'x' || str[i + 1] == 'X'))
     {
-        char c = str[i];
-        if (c >= '0' && c <= '9')
+        is_hex = 1;
+        i += 2;
+    }
+    else if (!is_signed)
+    {
+        for (uint16_t j = i; j < len; j++)
         {
-            result = result * 10 + (c - '0');
+            char c = str[j];
+            if ((c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))
+            {
+                is_hex = 1;
+                break;
+            }
         }
     }
 
-    return result * sign;
+    uint64_t result = 0;
+
+    if (is_hex)
+    {
+        for (; i < len; i++)
+        {
+            char c = str[i];
+            if (c >= '0' && c <= '9')
+            {
+                result = (result << 4) | (c - '0');
+            }
+            else if (c >= 'a' && c <= 'f')
+            {
+                result = (result << 4) | (c - 'a' + 10);
+            }
+            else if (c >= 'A' && c <= 'F')
+            {
+                result = (result << 4) | (c - 'A' + 10);
+            }
+            else
+            {
+                continue;
+            }
+        }
+    }
+    else
+    {
+        for (; i < len; i++)
+        {
+            char c = str[i];
+            if (c >= '0' && c <= '9')
+            {
+                result = result * 10 + (c - '0');
+            }
+            else
+            {
+                continue;
+            }
+        }
+    }
+
+    return negative ? (0ULL - result) : result;
+}
+
+int64_t typeconv_to_i64(const char* str, uint16_t len)
+{
+    return (int64_t)parse_raw64(str, len, 1);
 }
 
 uint64_t typeconv_to_u64(const char* str, uint16_t len)
 {
-    uint64_t result = 0;
-    uint16_t i = 0;
-
-    if (len >= 2 && str[0] == '0' && (str[1] == 'x' || str[1] == 'X'))
-    {
-        i = 2;
-    }
-
-    for (; i < len; i++)
-    {
-        char c = str[i];
-        result <<= 4;
-
-        if (c >= '0' && c <= '9')
-            result |= (c - '0');
-        else if (c >= 'a' && c <= 'f')
-            result |= (c - 'a' + 10);
-        else if (c >= 'A' && c <= 'F')
-            result |= (c - 'A' + 10);
-    }
-
-    return result;
+    return parse_raw64(str, len, 0);
 }
 
 /*=============================================================
@@ -130,14 +167,13 @@ uint16_t typeconv_from_u64(uint64_t val, char* buf, uint16_t buf_size)
         }
     }
 
-    /* "0x" prefix + digits */
     uint16_t total = 2 + pos;
     if (total >= buf_size)
         total = buf_size - 1;
 
     uint16_t write_pos = 0;
-    buf[write_pos++] = '0';
-    buf[write_pos++] = 'x';
+    if (write_pos < total) buf[write_pos++] = '0';
+    if (write_pos < total) buf[write_pos++] = 'x';
 
     for (int16_t j = pos - 1; j >= 0 && write_pos < total; j--)
         buf[write_pos++] = tmp[j];

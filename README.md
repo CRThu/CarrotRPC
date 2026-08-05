@@ -23,7 +23,7 @@ Edit `inc/rpc_cfg.h` to enable/disable features:
 
 ```c
 /* ringbuf */
-#define RINGBUF_DMA              // Enable DMA hardware sync
+#define RINGBUF_DMA              // Enable DMA hardware sync & DMA TX status machine
 
 /* rpclog */
 #define RPC_LOG_ENABLE_DEBUG  1  // Enable DEBUG log
@@ -33,6 +33,7 @@ Edit `inc/rpc_cfg.h` to enable/disable features:
 #define RPC_LOG_OUTPUT_BUF       // Enable buffer output mode
 
 /* cmdqueue */
+#define RPC_USE_CMD_QUEUE   1    // Enable cmdqueue (1=enabled, 0=disabled with 0 RAM overhead)
 #define CMD_QUEUE_SIZE      128  // Queue capacity
 #define CMD_QUEUE_BUF_SIZE  2048 // Queue buffer size
 
@@ -103,11 +104,51 @@ dispatch_status_t s = invoke_call(&dispatcher, &args, &ret);
 // ret.i64 == 30
 ```
 
-### Pipeline
+### Signature & Type Registration
 
-```
-DMA buffer → cmd_scan → cmd_queue → cmd_parse → dispatch + invoke → function call
-```
+Functions are registered dynamically using human-readable signatures: `"name(args...) -> ret_type"`.
+
+| Type Code | C Type Equivalent | Signature Example | Description |
+|-----------|-------------------|-------------------|-------------|
+| `v` | `void` | `"hello()"` | No arguments, void return |
+| `i` / `i64` | `int64_t` | `"add(i, i) -> i"` | 64-bit signed integer |
+| `u` / `u64` | `uint64_t` | `"hex(u) -> u"` | 64-bit unsigned integer |
+| `s` | `char*` | `"echo(s) -> s"` | String pointer |
+| `f` / `f64` | `double` | `"pi() -> f"` | 64-bit floating point |
+
+* Omitting `->` implies void return: `"proc(s, i)"` is equivalent to `"proc(s, i) -> v"`.
+
+### Core API Reference
+
+#### `cmdscan` (Zero-Copy Command Parser)
+* `cmd_init(scanner, buf, size)` / `cmd_init_ringbuf(scanner, ring)`: Initialize linear/ringbuf scanner context.
+* `cmd_scan(scanner, &entry)`: Scan for command boundary (supports linear/ringbuf, auto-consumes framed data from ringbuf).
+* `cmd_parse(cmd, len, &args)`: Parse command string into argument pointers array (zero-copy).
+
+#### `cmdqueue` (Command Queue)
+* `cmd_queue_init(queue, buf, buf_size)`: Initialize queue with external memory buffer.
+* `cmd_queue_push(queue, &entry)` / `cmd_queue_pop(queue, &entry)`: Enqueue and dequeue command entries.
+* `cmd_queue_check(queue, func_name)`: Cooperative interrupt scan for high-priority command.
+
+#### `ringbuf` (Ring Buffer & DMA TX State Machine)
+* `ringbuf_init(ring, buf, size)`: Initialize ring buffer.
+* `ringbuf_set_head_reader(ring, func)` / `ringbuf_set_tail_reader(ring, func)`: Bind hardware DMA RX/TX position getters.
+* `ringbuf_dma_tx_fetch(ring, &ptr, &len)`: Poll & fetch contiguous DMA TX sending slice.
+* `ringbuf_dma_tx_complete(ring, &next_ptr, &next_len)`: TC interrupt commit & probe for chained wrap-around TX.
+
+#### `dispatch` & `invoke` (Invocation Engine)
+* `dispatch_init(reg)`: Reset registry.
+* `dispatch_reg(reg, handler, "sig")`: Register function with type signature.
+* `dispatch_find(reg, name, len)`: Length-bounded function lookup.
+* `invoke_call(reg, &args, &ret)`: Zero-copy execution engine (consolidated 64-bit staging).
+
+#### `typeconv` (Bidirectional Value Conversion)
+* `typeconv_to_i64(str, len)` / `typeconv_to_u64(str, len)` / `typeconv_to_f64(str, len)`: String to numeric value conversion.
+* `typeconv_from_i64(val, buf, size)` / `typeconv_from_u64(val, buf, size)` / `typeconv_from_f64(val, buf, size, prec)`: Numeric value to string conversion.
+
+#### `rpclog` (Unified Logging)
+* `rpc_info(...)` / `rpc_error(...)` / `rpc_debug(...)` / `rpc_warning(...)`: User-level log macros.
+* `rpc_return(...)` / `rpc_data(...)` / `rpc_reg(...)`: Protocol-level log macros.
 
 ### Building
 
@@ -126,10 +167,6 @@ cmake -B build
 cmake --build build
 ./build/carrot_tests
 ```
-
-### Testing
-
-222 tests across 8 suites: e2e, cmdscan, cmdqueue, ringbuf, typeconv, dispatch, invoke, rpc_log.
 
 ### License
 

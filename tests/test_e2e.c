@@ -15,7 +15,7 @@
 #include "rpclog.h"
 #include <string.h>
 
-/* ===== Helper: run full new pipeline ===== */
+static uint8_t e2e_q_buf[2048];
 
 static dispatch_status_t parse_and_invoke(const char* cmd)
 {
@@ -39,7 +39,7 @@ static dispatch_status_t parse_and_invoke(const char* cmd)
     cmd_init(&scanner, (const uint8_t*)cmd, len);
 
     cmd_queue_t queue;
-    cmd_queue_init(&queue);
+    cmd_queue_init(&queue, e2e_q_buf, sizeof(e2e_q_buf));
 
     cmd_entry_t entry;
     while (cmd_scan(&scanner, &entry) == CMD_COMPLETE)
@@ -630,7 +630,7 @@ void test_e2e_streaming_chunked_pipeline(void)
 
     cmd_scanner_t scanner;
     cmd_queue_t queue;
-    cmd_queue_init(&queue);
+    cmd_queue_init(&queue, e2e_q_buf, sizeof(e2e_q_buf));
 
     uint8_t dma_buf[64] = {0};
     cmd_init(&scanner, dma_buf, 0);
@@ -718,6 +718,19 @@ void test_e2e_reset_allows_re_register(void)
 static char g_log_buf[256];
 static uint16_t g_log_pos = 0;
 
+#if RPC_LOG_OUTPUT_BUF
+static void log_capture_buf(const char* buf, uint16_t len)
+{
+    for (uint16_t i = 0; i < len; i++)
+    {
+        if (g_log_pos < sizeof(g_log_buf) - 1)
+        {
+            g_log_buf[g_log_pos++] = buf[i];
+            g_log_buf[g_log_pos] = '\0';
+        }
+    }
+}
+#else
 static void log_capture_char(char c)
 {
     if (g_log_pos < sizeof(g_log_buf) - 1)
@@ -726,12 +739,17 @@ static void log_capture_char(char c)
         g_log_buf[g_log_pos] = '\0';
     }
 }
+#endif
 
 static void reset_log_capture(void)
 {
     memset(g_log_buf, 0, sizeof(g_log_buf));
     g_log_pos = 0;
+#if RPC_LOG_OUTPUT_BUF
+    rpc_log_set_output(log_capture_buf);
+#else
     rpc_log_set_output(log_capture_char);
+#endif
 }
 
 void test_e2e_auto_return_i64(void)
@@ -865,5 +883,69 @@ int run_e2e_tests(void)
     RUN_TEST(test_e2e_auto_return_str);
     RUN_TEST(test_e2e_auto_return_none);
 
+    /* Group 12: Pipeline Integration */
+    void test_pipeline_direct_bypass_queue(void);
+    void test_pipeline_queue_decoupled(void);
+    RUN_TEST(test_pipeline_direct_bypass_queue);
+    RUN_TEST(test_pipeline_queue_decoupled);
+
     return UNITY_END();
+}
+
+/* ===== Group 12: Pipeline Integration Tests ===== */
+static ringbuf_t s_pipe_ring;
+static uint8_t s_pipe_ring_buf[128];
+static cmd_scanner_t s_pipe_scanner;
+
+void test_pipeline_direct_bypass_queue(void)
+{
+    ringbuf_init(&s_pipe_ring, s_pipe_ring_buf, sizeof(s_pipe_ring_buf));
+    cmd_init_ringbuf(&s_pipe_scanner, &s_pipe_ring);
+    invoke_test_helpers_reset();
+
+    const char* cmd = "add(10, 20)\n";
+    ringbuf_write(&s_pipe_ring, (const uint8_t*)cmd, strlen(cmd));
+
+    cmd_entry_t entry;
+    TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, cmd_scan(&s_pipe_scanner, &entry));
+
+    cmd_args_t args;
+    cmd_parse((const char*)entry.buf + entry.cmd_start, entry.cmd_len, &args);
+
+    invoke_ret_t ret;
+    dispatch_status_t status = invoke_call(&invoke_dispatcher, &args, &ret);
+    TEST_ASSERT_EQUAL_INT(DISPATCH_OK, status);
+    TEST_ASSERT_EQUAL_INT(INVOKERET_I64, ret.type);
+    TEST_ASSERT_EQUAL_INT64(30, ret.i64);
+}
+
+void test_pipeline_queue_decoupled(void)
+{
+    ringbuf_init(&s_pipe_ring, s_pipe_ring_buf, sizeof(s_pipe_ring_buf));
+    cmd_init_ringbuf(&s_pipe_scanner, &s_pipe_ring);
+    invoke_test_helpers_reset();
+#if RPC_USE_CMD_QUEUE
+    static uint8_t q_buf[2048];
+    cmd_queue_t queue;
+    cmd_queue_init(&queue, q_buf, sizeof(q_buf));
+
+    const char* cmd = "add(100, 200)\n";
+    ringbuf_write(&s_pipe_ring, (const uint8_t*)cmd, strlen(cmd));
+
+    cmd_entry_t entry;
+    TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, cmd_scan(&s_pipe_scanner, &entry));
+    TEST_ASSERT_EQUAL_INT(CMDQUEUE_OK, cmd_queue_push(&queue, &entry));
+
+    cmd_entry_t popped_entry;
+    TEST_ASSERT_EQUAL_INT(CMDQUEUE_OK, cmd_queue_pop(&queue, &popped_entry));
+
+    cmd_args_t args;
+    cmd_parse((const char*)popped_entry.buf + popped_entry.cmd_start, popped_entry.cmd_len, &args);
+
+    invoke_ret_t ret;
+    dispatch_status_t status = invoke_call(&invoke_dispatcher, &args, &ret);
+    TEST_ASSERT_EQUAL_INT(DISPATCH_OK, status);
+    TEST_ASSERT_EQUAL_INT(INVOKERET_I64, ret.type);
+    TEST_ASSERT_EQUAL_INT64(300, ret.i64);
+#endif
 }

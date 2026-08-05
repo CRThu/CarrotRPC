@@ -21,7 +21,7 @@ extern "C"
 /**
  * @brief 字符串 (decimal) -> int64_t
  *
- * 支持 '-' 前缀，逐字符累加
+ * 支持 '-' 前缀，十进制解析
  *
  * @param str  字符串指针
  * @param len  字符串长度
@@ -32,7 +32,7 @@ int64_t typeconv_to_i64(const char* str, uint16_t len);
 /**
  * @brief 字符串 (hex) -> uint64_t
  *
- * 支持 0x/0X 前缀，十六进制累加
+ * 支持 0x/0X 前缀，十六进制解析
  *
  * @param str  字符串指针
  * @param len  字符串长度
@@ -51,9 +51,7 @@ uint64_t typeconv_to_u64(const char* str, uint16_t len);
 uint16_t typeconv_from_i64(int64_t val, char* buf, uint16_t buf_size);
 
 /**
- * @brief uint64_t -> 字符串 (hex)
- *
- * 输出格式: "0x" + hex digits
+ * @brief uint64_t -> 字符串 (hex "0x" 前缀)
  *
  * @param val       要转换的值
  * @param buf       输出缓冲区

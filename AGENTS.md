@@ -47,41 +47,39 @@ CarrotRPC 是一个轻量级的 C 动态函数调用框架，用于通过字符�
 ## 核心模块
 
 ### 0. rpc_cfg (全局配置)
-- **职责**: 集中管理所有模块的编译开关
+- **职责**: 集中管理所有模块的编译开关与参数 (采用“1. 用户配置区”与“2. default设置区”上下分离架构)
 - **使用方式**:
-  - 修改 `inc/rpc_cfg.h` 中的宏定义
-  - 或通过 CMake 参数覆盖：`-DRPC_xxx=1`
+  - 修改 `inc/rpc_cfg.h` 中的用户配置区 (所有开关均为 0/1 标志位：1=启用, 0=禁用)
+  - 或通过 CMake / 编译命令行参数覆盖：`-DRINGBUF_DMA=0`
+- **版本宏 (inc/rpc.h)**:
+  - `CARROT_RPC_VERSION_STR` ("2.1.0")
+  - `CARROT_RPC_VERSION_MAJOR` (2) / `MINOR` (1) / `PATCH` (0)
 - **配置项**:
   ```c
-  /* ringbuf */
-  #define RINGBUF_DMA              // 启用 DMA 硬件同步
-
-  /* rpclog */
-  #define RPC_LOG_ENABLE_DEBUG  1  // 启用 DEBUG 日志
-  #define RPC_LOG_ENABLE_INFO   1  // 启用 INFO 日志
-  #define RPC_LOG_ENABLE_WARN   1  // 启用 WARN 日志
-  #define RPC_LOG_ENABLE_ERROR  1  // 启用 ERROR 日志
-  #define RPC_LOG_OUTPUT_BUF       // 启用缓冲区输出模式
-
-  /* cmdqueue */
-  #define CMD_QUEUE_SIZE      128  // 队列容量
-  #define CMD_QUEUE_BUF_SIZE  2048 // 队列缓冲区大小
-
-  /* dispatch */
+  /* 1. 用户配置区 */
+  #define RINGBUF_DMA             1  // 启用 DMA 硬件同步 (1=启用, 0=禁用)
+  #define RPC_LOG_OUTPUT_BUF      1  // 启用缓冲区输出模式 (1=缓冲区模式, 0=字节模式)
+  #define RPC_LOG_ENABLE_DEBUG    1  // 启用 DEBUG 日志
+  #define RPC_LOG_ENABLE_INFO     1  // 启用 INFO 日志
+  #define RPC_LOG_ENABLE_WARN     1  // 启用 WARN 日志
+  #define RPC_LOG_ENABLE_ERROR    1  // 启用 ERROR 日志
+  #define RPC_USE_CMD_QUEUE       1  // 启用命令队列 (1=启用, 0=未启用且 0 RAM 占用)
+  #define CMD_QUEUE_SIZE        128  // 队列容量 (最大可排队命令条数)
   #define DISPATCH_MAX_FUNC_CNT  64  // 最大注册函数数
-  #define DISPATCH_ARGS_MAX_CNT  9   // 单函数最大参数数
+  #define DISPATCH_ARGS_MAX_CNT   9  // 单函数最大参数数
+  #define INVOKE_STR_MAX_SIZE    64  // 字符串返回值最大长度
+  #define RPC_INVOKE_AUTO_RETURN  1  // 自动输出函数返回值 [RETURN]: <VALUE> (1=启用, 0=禁用)
 
-  /* invoke */
-  #define INVOKE_STR_MAX_SIZE      64  // 字符串返回值最大长度
-  #define RPC_INVOKE_AUTO_RETURN  1   // 自动输出函数返回值 [RETURN]: <VALUE> (1=启用, 0=禁用)
+  /* 2. default设置区 (仅在命令行和上方用户配置区未定义时保底生效) */
   ```
-- **优先级**: CMake 参数 > rpc_cfg.h > 模块默认值
+- **优先级**: 命令行参数 (-DXXX=val) > rpc_cfg.h 用户配置区 > default设置区
 
 ### 1. cmdscan (零拷贝命令解析器)
 - **职责**: 零拷贝命令扫描 + 参数切分，适配 DMA 场景
 - **设计目标**:
   - 无内存复制 - 直接返回原始缓冲区指针
   - 扫描提取 + 零拷贝参数切分
+  - 支持原生 `ringbuf_t` 探查回绕边界，无需 `linear_buf` 静态拉平
   - 无 std 库依赖 - 纯嵌入式友好
 - **关键结构**:
   - `cmd_scanner_t`: 扫描器上下文 (buf, buf_size, scan_pos, cmd_start, func_len, state)
@@ -91,39 +89,22 @@ CarrotRPC 是一个轻量级的 C 动态函数调用框架，用于通过字符�
   - `cmd_arg_t`: 参数指针 (ptr + len)
   - `cmd_status_t`: 扫描状态 (CMD_INCOMPLETE, CMD_COMPLETE, CMD_ERROR)
 - **核心 API**:
-  - `cmd_init(scanner, buf, size)` - 初始化扫描器
+  - `cmd_init(scanner, buf, size)` - 初始化线性缓冲区扫描器
+  - `cmd_init_ringbuf(scanner, ring)` - 初始化环形缓冲区扫描器 (无缝支持 ringbuf 自动消费)
   - `cmd_reset(scanner)` - 重置扫描器
-  - `cmd_scan(scanner, &entry)` - 扫描提取单条命令边界
+  - `cmd_scan(scanner, &entry)` - 扫描提取单条命令边界 (支持线性/环形 buf)
   - `cmd_parse(cmd, len, &args)` - 将完整命令解析为参数指针数组（零拷贝）
   - `cmd_compare(a, a_len, b, b_len)` - 快速字节比较（尾部优先）
-- **使用流程**:
-  ```c
-  cmd_scanner_t scanner;
-  cmd_init(&scanner, dma_buf, dma_len);
-  
-  cmd_entry_t entry;
-  while (cmd_scan(&scanner, &entry) == CMD_COMPLETE) {
-      cmd_queue_push(&queue, &entry);
-  }
-  
-  // 出队时再解析
-  while (!cmd_queue_is_empty(&queue)) {
-      cmd_queue_pop(&queue, &entry);
-      cmd_args_t args;
-      cmd_parse((const char*)entry.buf + entry.cmd_start, entry.cmd_len, &args);
-      // args.func_name, args.func_name_len, args.args[], args.args_count
-  }
-  ```
 
 ### 2. cmdqueue (命令队列)
 - **职责**: 命令排队，支持协作式中断检查
 - **设计目标**:
-  - 内部 buf 存储原始命令（独立于 DMA 缓冲区）
-  - 支持环形/非环形 DMA 缓冲区
+  - 动态外部传入缓冲区存储原始命令（消除硬编码静态内存开销）
+  - 通过 `#define RPC_USE_CMD_QUEUE` 条件编译，未启用时零 RAM/Flash 占用
 - **关键结构**:
   - `cmd_queue_t`: 命令队列（内部 items[] 使用 `cmd_entry_t`）
 - **核心 API**:
-  - `cmd_queue_init(queue)` - 初始化队列
+  - `cmd_queue_init(queue, buf, buf_size)` - 初始化队列 (传入外部缓冲区)
   - `cmd_queue_push(queue, &entry)` - 入队（从 entry 复制）
   - `cmd_queue_pop(queue, &entry)` - 出队（返回 cmd_entry_t）
   - `cmd_queue_check(queue, func_name)` - 扫描指定函数名
@@ -134,9 +115,10 @@ CarrotRPC 是一个轻量级的 C 动态函数调用框架，用于通过字符�
 - **设计目标**:
   - 支持读写操作，wrap-aware
   - 可选硬件同步：DMA 接收(读 head) / DMA 发送(读 tail)
+  - 极简 DMA TX 切片状态机 (`fetch` / `complete`)
   - 适用于嵌入式 MCU (STM32 / ESP32 等)
 - **编译宏**:
-  - `RINGBUF_DMA` - 在 `ringbuf.h` 中取消注释启用，开启后支持 DMA 硬件同步（head_reader / tail_reader），关闭后退化为纯软件环形缓冲区
+  - `RINGBUF_DMA` - 在 `ringbuf.h` 中取消注释启用，开启后支持 DMA 硬件同步与 DMA TX 切片 API，关闭后退化为纯软件环形缓冲区
 - **关键结构**:
   - `ringbuf_t`: 环形缓冲区管理结构
 - **核心 API**:
@@ -144,6 +126,8 @@ CarrotRPC 是一个轻量级的 C 动态函数调用框架，用于通过字符�
   - `ringbuf_set_head_reader(ring, func)` - 设置 DMA RX 硬件位置读取函数 (需 `RINGBUF_DMA`)
   - `ringbuf_set_tail_reader(ring, func)` - 设置 DMA TX 硬件位置读取函数 (需 `RINGBUF_DMA`)
   - `ringbuf_sync_head(ring)` / `ringbuf_sync_tail(ring)` - 从硬件同步位置 (需 `RINGBUF_DMA`)
+  - `ringbuf_dma_tx_fetch(ring, &ptr, &len)` - 提取连续 DMA TX 发送切片 (需 `RINGBUF_DMA`)
+  - `ringbuf_dma_tx_complete(ring, &next_ptr, &next_len)` - DMA TC 中断提交并探查链式续发 (需 `RINGBUF_DMA`)
   - `ringbuf_set_head(ring, head)` / `ringbuf_set_tail(ring, tail)` - 手动设置
   - `ringbuf_readable(ring)` / `ringbuf_writable(ring)` - 查询空间
   - `ringbuf_write(ring, src, len)` - 写入（处理 wrap-around）
@@ -196,14 +180,16 @@ CarrotRPC 是一个轻量级的 C 动态函数调用框架，用于通过字符�
 ### 5. invoke (调度执行引擎)
 - **职责**: 通过零拷贝解析结果调用函数，依赖 dispatch 和 typeconv
 - **设计目标**:
-  - 栈上 staging buffer: val_i64[9], val_u64[9], str_buf[9][64], void* p[9]
-  - p[i] 直接指向数据 (一次解引用读取值)
+  - 极简栈上 staging buffer: `val_raw[9]` (合并 64 位整数，省下 72 字节栈内存), `str_buf[9][64]`, `void* p[9]`
+  - `p[i]` 直接指向数据 (一次解引用读取值)
   - 支持三种返回值族: void / int64 / char*
+  - 内置全局字符串共享缓冲区，防护悬空野指针
 - **关键结构**:
   - `invoke_ret_t`: 返回值 (type + union of i64/str)
   - `invoke_ret_type_t`: 返回值类型 (INVOKERET_NONE/I64/STR)
 - **核心 API**:
   - `invoke_call(reg, result, ret)` — 通过零拷贝解析结果调用函数
+  - `g_rpc_str_ret_buf` / `RPC_STR_RET_BUF` — 库内置全局字符串返回共享缓冲区 (避免 handler 内返回局部栈指针引发悬空指针)
 - **用法示例**:
   ```c
   #include "invoke.h"
@@ -222,12 +208,13 @@ CarrotRPC 是一个轻量级的 C 动态函数调用框架，用于通过字符�
 - **职责**: 字符串与类型化值之间的双向转换
 - **设计目标**:
   - 纯函数，无状态，无外部依赖
+  - 单路 64 位无失真解析，彻底防止超大无符号数十进制溢出
   - 嵌入式友好：无 stdio，纯整数+浮点运算
 - **核心 API**:
   - `typeconv_to_i64(str, len)` — 字符串 (decimal) -> int64_t
-  - `typeconv_to_u64(str, len)` — 字符串 (hex) -> uint64_t
+  - `typeconv_to_u64(str, len)` — 字符串 (hex/decimal) -> uint64_t
   - `typeconv_to_f64(str, len)` — 字符串 (decimal/科学计数法) -> double
-  - `typeconv_from_i64(val, buf, size)` — int64_t -> 字符串
+  - `typeconv_from_i64(val, buf, size)` — int64_t -> 字符串 (decimal)
   - `typeconv_from_u64(val, buf, size)` — uint64_t -> 字符串 (hex)
   - `typeconv_from_f64(val, buf, size, precision)` — double -> 字符串
 
@@ -305,7 +292,12 @@ dispatch_reg() 注册 → DMA → cmd_scan → cmd_queue → cmd_parse → invok
 
 ## 构建
 
-**必须使用 `build.bat` 构建**，不要直接调用 cmake。build.bat 自动检测编译器 (GCC/MSVC) 并使用 Ninja。
+**构建工具推荐说明**：
+- Windows 本地支持 `build.bat` 构建（需 MSVC/GCC 环境）
+- **WSL Linux 环境推荐直接使用 WSL GCC 编译运行测试**：
+  ```bash
+  wsl bash -c "cd /mnt/d/Projects/CarrotRPC && gcc -DUNITY_INCLUDE_DOUBLE -Iinc -Ivendor/unity -Ivendor/fff vendor/unity/unity.c src/*.c tests/*.c -o /tmp/carrot_tests && /tmp/carrot_tests"
+  ```
 
 ```bat
 build.bat          # 构建
@@ -315,10 +307,9 @@ build.bat demo     # 构建并运行 demo
 
 ## 测试
 
-测试文件: `tests/test_*.c`，使用 Unity 框架，构建后运行 `carrot_tests`。
+测试文件: `tests/test_*.c` (共 8 个模块化测试文件)，使用 Unity 框架，构建后运行 `carrot_tests`。
 
 ## 文档
 
 - 详细使用指南请参考: [docs/rpc_usage.md](docs/rpc_usage.md)（含 API 参考、使用场景与 DMA 集成指南）
 - 最新协议通信手册 (v2.0) 请参考: [CARROT_RPC_v2.md](CARROT_RPC_v2.md)（纯固定 Tag 前缀 + 正交二维波形矩阵）
-- 传统协议通信手册 (v1.2.3) 请参考: [CARROT_RPC.md](CARROT_RPC.md)

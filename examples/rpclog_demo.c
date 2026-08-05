@@ -24,7 +24,7 @@ static void my_putc(char c)
 /*=============================================================
  * 输出回调：缓冲区模式 (演示用)
  *=============================================================*/
-#ifdef RPC_LOG_OUTPUT_BUF
+#if RPC_LOG_OUTPUT_BUF
 static void my_buf_out(const char* buf, uint16_t len)
 {
     for (uint16_t i = 0; i < len; i++)
@@ -46,7 +46,7 @@ static int64_t add(int64_t a, int64_t b)
 int main(void)
 {
     /* 1. 设置输出回调 */
-#ifdef RPC_LOG_OUTPUT_BUF
+#if RPC_LOG_OUTPUT_BUF
     rpc_log_set_output(my_buf_out);
 #else
     rpc_log_set_output(my_putc);

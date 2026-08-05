@@ -7,12 +7,14 @@
 #include "cmdscan.h"
 #include <string.h>
 
+#define BUF_SIZE 2048
+static uint8_t q_buf[BUF_SIZE];
 static cmd_queue_t queue;
 
 /* ===== init ===== */
 void test_cmdqueue_init(void)
 {
-    cmd_queue_init(&queue);
+    cmd_queue_init(&queue, q_buf, sizeof(q_buf));
     TEST_ASSERT_TRUE(cmd_queue_is_empty(&queue));
     TEST_ASSERT_EQUAL_UINT8(0, cmd_queue_count(&queue));
 }
@@ -20,7 +22,7 @@ void test_cmdqueue_init(void)
 /* ===== push / pop ===== */
 void test_cmdqueue_push_pop_simple(void)
 {
-    cmd_queue_init(&queue);
+    cmd_queue_init(&queue, q_buf, sizeof(q_buf));
 
     cmd_scanner_t scanner;
     cmd_init(&scanner, (const uint8_t*)"print(1,2)", 10);
@@ -47,7 +49,7 @@ void test_cmdqueue_push_pop_simple(void)
 
 void test_cmdqueue_push_pop_fifo(void)
 {
-    cmd_queue_init(&queue);
+    cmd_queue_init(&queue, q_buf, sizeof(q_buf));
 
     cmd_scanner_t scanner;
     cmd_entry_t entry1, entry2;
@@ -77,7 +79,7 @@ void test_cmdqueue_push_pop_fifo(void)
 /* ===== full ===== */
 void test_cmdqueue_push_full(void)
 {
-    cmd_queue_init(&queue);
+    cmd_queue_init(&queue, q_buf, sizeof(q_buf));
 
     cmd_scanner_t scanner;
     cmd_init(&scanner, (const uint8_t*)"x\n", 2);
@@ -100,7 +102,7 @@ void test_cmdqueue_push_full(void)
 /* ===== pop empty ===== */
 void test_cmdqueue_pop_empty(void)
 {
-    cmd_queue_init(&queue);
+    cmd_queue_init(&queue, q_buf, sizeof(q_buf));
 
     cmd_entry_t entry_out;
     cmd_queue_status_t s = cmd_queue_pop(&queue, &entry_out);
@@ -110,7 +112,7 @@ void test_cmdqueue_pop_empty(void)
 /* ===== flush ===== */
 void test_cmdqueue_flush(void)
 {
-    cmd_queue_init(&queue);
+    cmd_queue_init(&queue, q_buf, sizeof(q_buf));
 
     cmd_scanner_t scanner;
     cmd_init(&scanner, (const uint8_t*)"test\n", 5);
@@ -131,7 +133,7 @@ void test_cmdqueue_flush(void)
 /* ===== check ===== */
 void test_cmdqueue_check_found(void)
 {
-    cmd_queue_init(&queue);
+    cmd_queue_init(&queue, q_buf, sizeof(q_buf));
 
     cmd_scanner_t scanner;
     cmd_entry_t entry1, entry2;
@@ -150,13 +152,13 @@ void test_cmdqueue_check_found(void)
 
 void test_cmdqueue_check_empty(void)
 {
-    cmd_queue_init(&queue);
+    cmd_queue_init(&queue, q_buf, sizeof(q_buf));
     TEST_ASSERT_EQUAL_UINT8(0, cmd_queue_check(&queue, "stop"));
 }
 
 void test_cmdqueue_check_partial_name(void)
 {
-    cmd_queue_init(&queue);
+    cmd_queue_init(&queue, q_buf, sizeof(q_buf));
 
     cmd_scanner_t scanner;
     cmd_init(&scanner, (const uint8_t*)"stop_all\n", 9);
@@ -191,7 +193,7 @@ void test_cmdqueue_func_len_match_cmdscan(void)
         TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, status);
         TEST_ASSERT_EQUAL_UINT8(expected_func_len[i], entry.func_len);
 
-        cmd_queue_init(&queue);
+        cmd_queue_init(&queue, q_buf, sizeof(q_buf));
         cmd_queue_status_t s = cmd_queue_push(&queue, &entry);
         TEST_ASSERT_EQUAL_INT(CMDQUEUE_OK, s);
 
@@ -206,7 +208,7 @@ void test_cmdqueue_func_len_match_cmdscan(void)
 /* ===== buf 满 ===== */
 void test_cmdqueue_buf_overflow(void)
 {
-    cmd_queue_init(&queue);
+    cmd_queue_init(&queue, q_buf, sizeof(q_buf));
 
     char big[128];
     memset(big, 'A', sizeof(big));
@@ -237,7 +239,7 @@ void test_cmdqueue_buf_overflow(void)
 /* ===== push NULL ===== */
 void test_cmdqueue_push_invalid(void)
 {
-    cmd_queue_init(&queue);
+    cmd_queue_init(&queue, q_buf, sizeof(q_buf));
 
     cmd_queue_status_t s = cmd_queue_push(&queue, NULL);
     TEST_ASSERT_EQUAL_INT(CMDQUEUE_ERR_NULL, s);

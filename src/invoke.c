@@ -8,24 +8,27 @@
 #include "rpclog.h"
 #include <string.h>
 
+/* 库内置全局字符串返回共享缓冲区 */
+char g_rpc_str_ret_buf[INVOKE_STR_MAX_SIZE];
+
 /*=============================================================
  * 内部：将 cmd_arg_t 转为类型化值，存入 staging buffer
  * p[i] 直接指向数据 (一次解引用读取值)
  *=============================================================*/
 static void stage_arg(const cmd_arg_t* arg, uint8_t type,
-                      int64_t* val_i64, uint64_t* val_u64,
+                      uint64_t* val_raw,
                       char (*str_buf)[INVOKE_STR_MAX_SIZE],
                       void** p, uint8_t i)
 {
     switch (type)
     {
     case DI:
-        val_i64[i] = typeconv_to_i64(arg->ptr, arg->len);
-        p[i] = &val_i64[i];
+        val_raw[i] = (uint64_t)typeconv_to_i64(arg->ptr, arg->len);
+        p[i] = &val_raw[i];
         break;
     case DU:
-        val_u64[i] = typeconv_to_u64(arg->ptr, arg->len);
-        p[i] = &val_u64[i];
+        val_raw[i] = typeconv_to_u64(arg->ptr, arg->len);
+        p[i] = &val_raw[i];
         break;
     case DS:
     {
@@ -92,13 +95,11 @@ dispatch_status_t invoke_call(dispatch_registry_t* reg,
     }
 
     /* 3. staging buffer — 全部在栈上，outlives handler call */
-    int64_t  val_i64[DISPATCH_ARGS_MAX_CNT];
-    uint64_t val_u64[DISPATCH_ARGS_MAX_CNT];
+    uint64_t val_raw[DISPATCH_ARGS_MAX_CNT];
     char     str_buf[DISPATCH_ARGS_MAX_CNT][INVOKE_STR_MAX_SIZE];
     void*    p[DISPATCH_ARGS_MAX_CNT];
 
-    memset(val_i64, 0, sizeof(val_i64));
-    memset(val_u64, 0, sizeof(val_u64));
+    memset(val_raw, 0, sizeof(val_raw));
     memset(str_buf, 0, sizeof(str_buf));
     memset(p, 0, sizeof(p));
 
@@ -110,7 +111,7 @@ dispatch_status_t invoke_call(dispatch_registry_t* reg,
             continue;
         }
         stage_arg(&result->args[i], f->args_type[i],
-                  val_i64, val_u64, str_buf, p, i);
+                  val_raw, str_buf, p, i);
     }
 
     /* 4. 根据返回值类型选择 delegate 族，按参数数量分发 */
