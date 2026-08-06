@@ -20,6 +20,21 @@ static inline int8_t is_space(char c)
 }
 
 /**
+ * @brief 安全获取 entry 中相较 cmd_start 的第 offset 个字符（自动处理 ringbuf 物理回绕）
+ */
+static inline char get_entry_char(const cmd_entry_t* entry, uint16_t offset)
+{
+    if (entry == NULL || entry->buf == NULL || entry->cmd_len == 0)
+        return '\0';
+    if (entry->buf_len > 0)
+    {
+        uint16_t pos = (uint16_t)((entry->cmd_start + offset) % entry->buf_len);
+        return (char)entry->buf[pos];
+    }
+    return (char)entry->buf[entry->cmd_start + offset];
+}
+
+/**
  * @brief 检查字符是否为终止符
  */
 static inline int8_t is_terminator(char c)
@@ -267,19 +282,6 @@ cmd_status_t cmd_scan(cmd_scanner_t* scanner, cmd_entry_t* entry)
 /*=============================================================
  * 参数解析 API（零拷贝 + 环形回绕安全）
  *=============================================================*/
-
-/**
- * @brief 安全获取 entry 中相较 cmd_start 的第 offset 个字符（考虑 ringbuf 取模回绕）
- */
-static inline char get_entry_char(const cmd_entry_t* entry, uint16_t offset)
-{
-    if (entry->buf_len > 0)
-    {
-        uint16_t pos = (uint16_t)((entry->cmd_start + offset) % entry->buf_len);
-        return (char)entry->buf[pos];
-    }
-    return (char)entry->buf[entry->cmd_start + offset];
-}
 
 /**
  * @brief 获取 entry 中相较 cmd_start 的第 offset 个字符在 buf 中的绝对指针

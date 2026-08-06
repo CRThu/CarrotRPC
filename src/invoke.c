@@ -15,34 +15,109 @@ char g_rpc_str_ret_buf[INVOKE_STR_MAX_SIZE];
  * 内部：将 cmd_arg_t 转为类型化值，存入 staging buffer
  * p[i] 直接指向数据 (一次解引用读取值)
  *=============================================================*/
-static void stage_arg(const cmd_arg_t* arg, uint8_t type,
-                      uint64_t* val_raw,
-                      char (*str_buf)[INVOKE_STR_MAX_SIZE],
+/*=============================================================
+ * 内部辅助函数
+ *=============================================================*/
+
+/**
+ * @brief 从 entry 中提取 Token 文本存入本地 buffer (以 \0 结尾，支持 ringbuf 物理回绕)
+ * 使用分段 memcpy 实现极致性能：未跨界时 1 次 memcpy，跨界时 2 次 memcpy
+ */
+static uint16_t copy_entry_token(const cmd_entry_t* entry, uint16_t offset, uint16_t len, char* dst, uint16_t max_dst)
+{
+    if (dst == NULL || max_dst == 0 || entry == NULL || entry->buf == NULL) return 0;
+    if (len >= max_dst) len = max_dst - 1;
+
+    if (entry->buf_len > 0)
+    {
+        uint16_t start_phys = (uint16_t)((entry->cmd_start + offset) % entry->buf_len);
+        uint16_t first_part = entry->buf_len - start_phys;
+
+        if (len <= first_part)
+        {
+            memcpy(dst, &entry->buf[start_phys], len);
+        }
+        else
+        {
+            memcpy(dst, &entry->buf[start_phys], first_part);
+            memcpy(dst + first_part, entry->buf, len - first_part);
+        }
+    }
+    else
+    {
+        memcpy(dst, &entry->buf[entry->cmd_start + offset], len);
+    }
+
+    dst[len] = '\0';
+    return len;
+}
+
+/**
+ * @brief 将 cmd_arg_t 转为类型化值，存入 staging buffer
+ */
+static void stage_arg(const cmd_entry_t* entry, const cmd_arg_t* arg, uint8_t type,
+                      uint64_t* val_raw, char (*str_buf)[INVOKE_STR_MAX_SIZE],
                       void** p, uint8_t i)
 {
-    switch (type)
+    uint16_t arg_offset = 0;
+    if (entry->buf_len > 0)
     {
-    case DI:
-        val_raw[i] = (uint64_t)typeconv_to_i64(arg->ptr, arg->len);
-        p[i] = &val_raw[i];
-        break;
-    case DU:
-        val_raw[i] = typeconv_to_u64(arg->ptr, arg->len);
-        p[i] = &val_raw[i];
-        break;
-    case DS:
-    {
-        uint16_t copy_len = arg->len < (INVOKE_STR_MAX_SIZE - 1)
-                              ? arg->len : (INVOKE_STR_MAX_SIZE - 1);
-        memcpy(str_buf[i], arg->ptr, copy_len);
-        str_buf[i][copy_len] = '\0';
-        p[i] = str_buf[i];
-        break;
+        uint16_t phys = (uint16_t)(arg->ptr - (const char*)entry->buf);
+        arg_offset = (uint16_t)((phys + entry->buf_len - (entry->cmd_start % entry->buf_len)) % entry->buf_len);
     }
-    case DV:
-    default:
-        p[i] = NULL;
-        break;
+    else
+    {
+        arg_offset = (uint16_t)(arg->ptr - (const char*)&entry->buf[entry->cmd_start]);
+    }
+
+    if (type == DS)
+    {
+        copy_entry_token(entry, arg_offset, arg->len, str_buf[i], sizeof(str_buf[i]));
+        p[i] = str_buf[i];
+    }
+    else if (type == DI || type == DU || type == DF)
+    {
+        /* 判断数字 Token 是否在物理内存中连续（未跨越末尾） */
+        uint16_t phys = (uint16_t)(arg->ptr - (const char*)entry->buf);
+        int is_contiguous = (entry->buf_len == 0) || (phys + arg->len <= entry->buf_len);
+
+        if (is_contiguous)
+        {
+            /* 未跨界：零拷贝直接解析数字，消除 memcpy 开销 */
+            if (type == DI)
+            {
+                val_raw[i] = (uint64_t)typeconv_to_i64(arg->ptr, arg->len);
+            }
+            else if (type == DU)
+            {
+                val_raw[i] = typeconv_to_u64(arg->ptr, arg->len);
+            }
+            else if (type == DF)
+            {
+                double d = typeconv_to_f64(arg->ptr, arg->len);
+                memcpy(&val_raw[i], &d, sizeof(double));
+            }
+        }
+        else
+        {
+            /* 跨界：退化为拷贝到临时栈 buffer 后解析 */
+            char num_str[32];
+            copy_entry_token(entry, arg_offset, arg->len, num_str, sizeof(num_str));
+            if (type == DI)
+            {
+                val_raw[i] = (uint64_t)typeconv_to_i64(num_str, arg->len);
+            }
+            else if (type == DU)
+            {
+                val_raw[i] = typeconv_to_u64(num_str, arg->len);
+            }
+            else if (type == DF)
+            {
+                double d = typeconv_to_f64(num_str, arg->len);
+                memcpy(&val_raw[i], &d, sizeof(double));
+            }
+        }
+        p[i] = &val_raw[i];
     }
 }
 
@@ -68,33 +143,53 @@ static invoke_ret_type_t resolve_ret_type(uint8_t ret_type)
  * 公开 API
  *=============================================================*/
 dispatch_status_t invoke_call(dispatch_registry_t* reg,
-                              cmd_args_t* result, invoke_ret_t* ret)
+                              const cmd_entry_t* entry, invoke_ret_t* ret)
 {
-    if (result == NULL || result->func_name == NULL || result->func_name_len == 0)
+    if (reg == NULL || entry == NULL || entry->buf == NULL || entry->cmd_len == 0)
     {
-        rpc_error("Invalid result.");
+        rpc_error("Invalid entry.");
         return DISPATCH_ERR_NULL;
     }
 
-    /* 1. 查找函数 */
-    dispatch_func_t* f = dispatch_find(reg, result->func_name, result->func_name_len);
+    /* 1. 复用 cmd_parse 获取零拷贝切分结构 */
+    cmd_args_t args;
+    uint8_t parse_res = cmd_parse(entry, &args);
+    if (parse_res == 0xFF || args.func_name == NULL || args.func_name_len == 0)
+    {
+        rpc_error("Invalid function name.");
+        return DISPATCH_ERR_NULL;
+    }
+
+    /* 2. 查找注册函数（跨界时透明接合函数名，复用 dispatch_find） */
+    char name_buf[DISPATCH_FUNC_NAME_MAX];
+    const char* func_name = args.func_name;
+
+    if (entry->buf_len > 0)
+    {
+        uint16_t phys = (uint16_t)(args.func_name - (const char*)entry->buf);
+        if (phys + args.func_name_len > entry->buf_len)
+        {
+            uint16_t func_offset = (uint16_t)((phys + entry->buf_len - (entry->cmd_start % entry->buf_len)) % entry->buf_len);
+            copy_entry_token(entry, func_offset, args.func_name_len, name_buf, sizeof(name_buf));
+            func_name = name_buf;
+        }
+    }
+
+    dispatch_func_t* f = dispatch_find(reg, func_name, args.func_name_len);
     if (f == NULL)
     {
         rpc_error("Function not found.");
         return DISPATCH_ERR_NOT_FOUND;
     }
 
-    uint8_t expected_args = f->args_count;
-
-    /* 2. 验证参数数量 */
-    if (result->args_count != expected_args)
+    /* 3. 验证参数数量 */
+    if (args.args_count != f->args_count)
     {
-        rpc_error("Arg count mismatch: expected %d, got %d.",
-                  expected_args, result->args_count);
+        rpc_error("Arg count mismatch: expected %d, got %d.", f->args_count, args.args_count);
         return DISPATCH_ERR_SIG;
     }
 
-    /* 3. staging buffer — 全部在栈上，outlives handler call */
+    /* 4. staging buffer — 全部在栈上 */
     uint64_t val_raw[DISPATCH_ARGS_MAX_CNT];
     char     str_buf[DISPATCH_ARGS_MAX_CNT][INVOKE_STR_MAX_SIZE];
     void*    p[DISPATCH_ARGS_MAX_CNT];
@@ -103,15 +198,9 @@ dispatch_status_t invoke_call(dispatch_registry_t* reg,
     memset(str_buf, 0, sizeof(str_buf));
     memset(p, 0, sizeof(p));
 
-    for (uint8_t i = 0; i < expected_args; i++)
+    for (uint8_t i = 0; i < f->args_count; i++)
     {
-        if (f->args_type[i] == DV)
-        {
-            p[i] = NULL;
-            continue;
-        }
-        stage_arg(&result->args[i], f->args_type[i],
-                  val_raw, str_buf, p, i);
+        stage_arg(entry, &args.args[i], f->args_type[i], val_raw, str_buf, p, i);
     }
 
     /* 4. 根据返回值类型选择 delegate 族，按参数数量分发 */
@@ -122,7 +211,7 @@ dispatch_status_t invoke_call(dispatch_registry_t* reg,
     /* ---- void 返回 ---- */
     case INVOKERET_NONE:
     {
-        switch (expected_args)
+        switch (f->args_count)
         {
         case 0: ((invoke_delegate_a0r0)f->handler)(); break;
         case 1: ((invoke_delegate_a1r0)f->handler)(p[0]); break;
@@ -145,7 +234,7 @@ dispatch_status_t invoke_call(dispatch_registry_t* reg,
     case INVOKERET_I64:
     {
         int64_t r = 0;
-        switch (expected_args)
+        switch (f->args_count)
         {
         case 0: r = ((invoke_delegate_a0r1)f->handler)(); break;
         case 1: r = ((invoke_delegate_a1r1)f->handler)(p[0]); break;
@@ -175,7 +264,7 @@ dispatch_status_t invoke_call(dispatch_registry_t* reg,
     case INVOKERET_STR:
     {
         const char* r = NULL;
-        switch (expected_args)
+        switch (f->args_count)
         {
         case 0: r = ((invoke_delegate_a0rs)f->handler)(); break;
         case 1: r = ((invoke_delegate_a1rs)f->handler)(p[0]); break;

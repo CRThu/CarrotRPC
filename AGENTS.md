@@ -86,7 +86,7 @@ CarrotRPC 是一个轻量级的 C 动态函数调用框架，用于通过字符�
   - `cmd_scanner_t`: 扫描器上下文 (buf, buf_size, scan_pos, cmd_start, func_len, state)
   - `cmd_scan_state_t`: 增量解析状态机状态 (CMD_STATE_IDLE, FUNC_NAME, PAREN_ARGS, SPACE_ARGS)
   - `cmd_entry_t`: 命令条目（扫描提取结果，含 buf 指针、cmd_start、cmd_len、func_len）
-  - `cmd_args_t`: 参数切分结果（函数名指针 + 参数指针数组，内置 wrap_buf 物理回绕安全缓冲）
+  - `cmd_args_t`: 参数切分结果（包含函数名指针、参数指针数组及原始缓冲区元数据 buf/buf_len）
   - `cmd_arg_t`: 参数指针 (ptr + len)
   - `cmd_status_t`: 扫描状态 (CMD_INCOMPLETE, CMD_COMPLETE, CMD_ERROR)
 - **核心 API**:
@@ -94,7 +94,8 @@ CarrotRPC 是一个轻量级的 C 动态函数调用框架，用于通过字符�
   - `cmd_init_ringbuf(scanner, ring)` - 初始化环形缓冲区扫描器 (无缝支持 ringbuf 自动消费)
   - `cmd_reset(scanner)` - 重置扫描器
   - `cmd_scan(scanner, &entry)` - 扫描提取单条命令边界 (支持线性/环形 buf)
-  - `cmd_parse(&entry, &args)` - 将完整命令条目解析为参数指针数组（零拷贝 + 环形回绕安全）
+  - `cmd_parse(&entry, &args)` - 将完整命令条目解析为参数指针数组（零拷贝 + 记录物理缓冲区边界）
+  - `cmd_arg_copy(&args, ptr, len, dst)` - 从 cmd_args_t 中解出连续字符（自动透明拼接物理回绕，0 额外 RAM 占用）
   - `cmd_compare(a, a_len, b, b_len)` - 快速字节比较（尾部优先）
 
 ### 2. cmdqueue (命令队列)
@@ -179,17 +180,18 @@ CarrotRPC 是一个轻量级的 C 动态函数调用框架，用于通过字符�
   ```
 
 ### 5. invoke (调度执行引擎)
-- **职责**: 通过零拷贝解析结果调用函数，依赖 dispatch 和 typeconv
+- **职责**: 直接接收 `cmd_entry_t` 调度调用函数，依赖 dispatch、cmdscan 和 typeconv
 - **设计目标**:
-  - 极简栈上 staging buffer: `val_raw[9]` (合并 64 位整数，省下 72 字节栈内存), `str_buf[9][64]`, `void* p[9]`
+  - 极简栈上 staging buffer: `val_raw[9]`, `str_buf[9][64]`, `void* p[9]`
   - `p[i]` 直接指向数据 (一次解引用读取值)
+  - 100% RingBuf 物理回绕兼容 (自动处理环形跨界 Token)
   - 支持三种返回值族: void / int64 / char*
   - 内置全局字符串共享缓冲区，防护悬空野指针
 - **关键结构**:
   - `invoke_ret_t`: 返回值 (type + union of i64/str)
   - `invoke_ret_type_t`: 返回值类型 (INVOKERET_NONE/I64/STR)
 - **核心 API**:
-  - `invoke_call(reg, result, ret)` — 通过零拷贝解析结果调用函数
+  - `invoke_call(reg, entry, ret)` — 直接通过 cmd_entry_t 条目调用函数
   - `g_rpc_str_ret_buf` / `RPC_STR_RET_BUF` — 库内置全局字符串返回共享缓冲区 (避免 handler 内返回局部栈指针引发悬空指针)
 - **用法示例**:
   ```c
@@ -197,11 +199,8 @@ CarrotRPC 是一个轻量级的 C 动态函数调用框架，用于通过字符�
   
   cmd_entry_t entry;
   if (cmd_scan(&scanner, &entry) == CMD_COMPLETE) {
-      cmd_args_t args;
-      cmd_parse(&entry, &args);
-
       invoke_ret_t ret;
-      dispatch_status_t s = invoke_call(&dispatcher, &args, &ret);
+      dispatch_status_t s = invoke_call(&dispatcher, &entry, &ret);
       if (s == DISPATCH_OK && ret.type == INVOKERET_I64) {
           printf("result: %ld\n", ret.i64);
       }
@@ -252,31 +251,29 @@ CarrotRPC 是一个轻量级的 C 动态函数调用框架，用于通过字符�
 
 ## 调用流程
 
-### 流程 1: 零拷贝方式 (推荐用于嵌入式)
+### 流程 1: 零拷贝直调方式 (推荐用于嵌入式)
 ```
-DMA 缓冲区 → cmd_scan → 参数指针数组 → dispatch + invoke → 函数执行
+DMA 缓冲区 → cmd_scan → dispatch + invoke → 函数执行
 ```
 
 1. DMA 接收数据到缓冲区
-2. `cmd_scan()` 扫描找到完整命令
-3. `cmd_parse()` 解析为参数指针数组（零拷贝）
-4. `invoke_call()` 查找函数、转换参数、调用
+2. `cmd_scan()` 扫描找到完整命令 (`cmd_entry_t`)
+3. `invoke_call(&dispatcher, &entry, &ret)` 查找函数、转换参数并调用
 
-### 流程 2: 预解析 + 队列方式 (推荐用于需要排队的场景)
+### 流程 2: 队列排队方式 (推荐用于多任务/中断排队场景)
 ```
-DMA 缓冲区 → cmd_scan → cmd_queue → 出队 → cmd_parse → dispatch + invoke → 函数执行
+DMA 缓冲区 → cmd_scan → cmd_queue → 出队 (entry) → invoke_call → 函数执行
 ```
 
 1. DMA 接收数据到缓冲区
 2. `cmd_scan()` 扫描命令边界
-3. `cmd_queue_push()` 复制命令到队列内部缓冲区
-4. `cmd_queue_pop()` 出队获取 cmd_entry_t
-5. `cmd_parse()` 执行时解析参数
-6. `invoke_call()` 查找函数、转换参数、调用
+3. `cmd_queue_push()` 复制命令条目到队列
+4. `cmd_queue_pop()` 出队获取 `cmd_entry_t`
+5. `invoke_call(&dispatcher, &entry, &ret)` 查找函数、转换参数并调用
 
 ### 流程 3: 完整管线 (v2, 推荐)
 ```
-dispatch_reg() 注册 → DMA → cmd_scan → cmd_queue → cmd_parse → invoke_call → 函数执行
+dispatch_reg() 注册 → DMA → cmd_scan → cmd_queue → invoke_call → 函数执行
 ```
 
 1. 启动时注册函数: `dispatch_reg(&dispatcher, handler, "name(args...) -> ret")`

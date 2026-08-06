@@ -19,6 +19,8 @@ extern "C"
 #endif
 
 #include <inttypes.h>
+#include <stddef.h>
+#include <string.h>
 #include "ringbuf.h"
 
 #define CMD_MAX_ARGS                    10

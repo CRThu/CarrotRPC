@@ -32,7 +32,7 @@ int main(void) {
     dispatch_init(&dispatcher);
     ringbuf_init(&dma_ring, dma_buf, sizeof(dma_buf));
     ringbuf_set_head_reader(&dma_ring, get_dma_head);
-    cmd_init(&scanner, NULL, 0);
+    cmd_init_ringbuf(&scanner, &dma_ring);
 
     /* 动态签名注册 */
     dispatch_reg(&dispatcher, LED_On,  "LED_On(i)");
@@ -45,12 +45,9 @@ int main(void) {
     while (1) {
         /* 原生环形零拷贝探查 + 自动解析 + 动态调度 */
         cmd_entry_t entry;
-        while (cmd_scan_ringbuf(&scanner, &dma_ring, &entry) == CMD_COMPLETE) {
-            cmd_args_t args;
-            cmd_parse_ringbuf(&dma_ring, &entry, &args);
-
+        while (cmd_scan(&scanner, &entry) == CMD_COMPLETE) {
             invoke_ret_t ret;
-            invoke_call(&dispatcher, &args, &ret);
+            invoke_call(&dispatcher, &entry, &ret);
             /* 若开启 RPC_INVOKE_AUTO_RETURN，有返回值时将自动通过 rpc_log 打印 [RETURN]: 30 */
         }
     }
@@ -70,8 +67,14 @@ add(10, 20)
 驱动端无需任何 busy 标志位计算，轮询与 TC 中断配合实现零拷贝连续输出：
 
 ```c
+#include "rpc.h"
+
 uint8_t tx_buf[512];
 ringbuf_t tx_ring;
+
+void USART_Tx_Init(void) {
+    ringbuf_init(&tx_ring, tx_buf, sizeof(tx_buf));
+}
 
 /* 轮询 / 主线程：fetch 发送切片 */
 void USART_Tx_Poll(void) {
@@ -109,7 +112,7 @@ cmd_queue_init(&cmd_queue, queue_buf, sizeof(queue_buf));
 void LongTask_Run(void) {
     for (int i = 0; i < 1000; i++) {
         cmd_entry_t entry;
-        while (cmd_scan_ringbuf(&scanner, &dma_ring, &entry) == CMD_COMPLETE) {
+        while (cmd_scan(&scanner, &entry) == CMD_COMPLETE) {
             cmd_queue_push(&cmd_queue, &entry);
         }
         if (cmd_queue_check(&cmd_queue, "Motor_Stop")) {
@@ -134,46 +137,12 @@ void LongTask_Run(void) {
 | `s` | `char*` | `"echo(s) -> s"` | 字符串指针 |
 | `f` / `f64` | `double` | `"pi() -> f"` | 双精度浮点数 |
 
-* **全局字符串返回**：处理函数若返回 char*，可直接写往 `g_rpc_str_ret_buf` / `RPC_STR_RET_BUF` 共享缓冲区，避免野指针。��片状态机，驱动端无需手动计算边界或声明 busy 标志位：
-
-```c
-#include "rpc.h"
-
-uint8_t tx_buf[512];
-ringbuf_t tx_ring;
-
-void USART_Tx_Init(void) {
-    ringbuf_init(&tx_ring, tx_buf, sizeof(tx_buf));
-}
-
-/* 1. 主线程 / 轮询发送：尝试 fetch 可发送切片 */
-void USART_Tx_Poll(void) {
-    const uint8_t* ptr;
-    uint16_t len;
-    /* 自动检查 busy、计算连续切片与边界截断 */
-    if (ringbuf_dma_tx_fetch(&tx_ring, &ptr, &len)) {
-        HAL_UART_Transmit_DMA(&huart1, (uint8_t*)ptr, len);
-    }
-}
-
-/* 2. DMA 发送完成中断 (TC 中断) */
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
-    const uint8_t* next_ptr;
-    uint16_t next_len;
-    /* 自动提交移走已发字节，若跨越回绕边界自动传出下一段链式续发 */
-    if (ringbuf_dma_tx_complete(&tx_ring, &next_ptr, &next_len)) {
-        HAL_UART_Transmit_DMA(&huart1, (uint8_t*)next_ptr, next_len);
-    }
-}
-```
-
 ---
 
 ## 注意事项
 
-1. **零串口中断 RX**：开启 DMA Circular 模式后，无需编写任何串口接收中断回调，全靠 `cmd_scan_ringbuf` 直接扫描环形缓冲区。
+1. **零串口中断 RX**：开启 DMA Circular 模式后，无需编写任何串口接收中断回调，全靠 `cmd_scan` 直接扫描环形缓冲区。
 2. **零拷贝 DMA TX**：使用 `ringbuf_dma_tx_fetch` 和 `ringbuf_dma_tx_complete` 能够免去应用层边界计算与 busy 状态跟踪。
 3. **参数解引用**：回调函数签名统一为 `void func(void* arg)`，内部根据类型使用 `*(int64_t*)arg` 读取参数值。
 4. **大小写敏感**：函数名注册与命令解析均严格区分大小写。
 5. **返回值捕获**：使用 `invoke_call` 传入 `invoke_ret_t*` 指针即可捕获函数返回值；字符串型返回可直接填充到全局 `g_rpc_str_ret_buf` / `RPC_STR_RET_BUF`。
-

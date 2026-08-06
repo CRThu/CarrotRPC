@@ -51,11 +51,7 @@ static dispatch_status_t parse_and_invoke(const char* cmd)
     while (!cmd_queue_is_empty(&queue))
     {
         cmd_queue_pop(&queue, &entry);
-
-        cmd_args_t result;
-        cmd_parse(&entry, &result);
-
-        last_status = invoke_call(&invoke_dispatcher, &result, NULL);
+        last_status = invoke_call(&invoke_dispatcher, &entry, NULL);
     }
 
     return last_status;
@@ -656,17 +652,15 @@ void test_e2e_streaming_chunked_pipeline(void)
     scanner.buf_size = 14;
     TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, cmd_scan(&scanner, &entry));
 
-    /* 入队 -> 出队 -> 解析 -> 调用 */
+    /* 入队 -> 出队 -> 调用 */
     cmd_queue_push(&queue, &entry);
     TEST_ASSERT_FALSE(cmd_queue_is_empty(&queue));
 
     cmd_entry_t pop_entry;
     cmd_queue_pop(&queue, &pop_entry);
-    cmd_args_t args;
-    cmd_parse(&pop_entry, &args);
 
     invoke_ret_t ret;
-    dispatch_status_t status = invoke_call(&invoke_dispatcher, &args, &ret);
+    dispatch_status_t status = invoke_call(&invoke_dispatcher, &pop_entry, &ret);
     TEST_ASSERT_EQUAL_INT(DISPATCH_OK, status);
     TEST_ASSERT_EQUAL_INT(1, invoke_mock_add_fake.call_count);
     TEST_ASSERT_EQUAL_INT64(10, invoke_captured.add_a);
@@ -679,9 +673,8 @@ void test_e2e_streaming_chunked_pipeline(void)
 
     cmd_queue_push(&queue, &entry);
     cmd_queue_pop(&queue, &pop_entry);
-    cmd_parse(&pop_entry, &args);
 
-    status = invoke_call(&invoke_dispatcher, &args, &ret);
+    status = invoke_call(&invoke_dispatcher, &pop_entry, &ret);
     TEST_ASSERT_EQUAL_INT(DISPATCH_OK, status);
     TEST_ASSERT_EQUAL_INT(1, invoke_mock_hello_fake.call_count);
 }
@@ -915,11 +908,8 @@ void test_pipeline_direct_bypass_queue(void)
     cmd_entry_t entry;
     TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, cmd_scan(&s_pipe_scanner, &entry));
 
-    cmd_args_t args;
-    cmd_parse(&entry, &args);
-
     invoke_ret_t ret;
-    dispatch_status_t status = invoke_call(&invoke_dispatcher, &args, &ret);
+    dispatch_status_t status = invoke_call(&invoke_dispatcher, &entry, &ret);
     TEST_ASSERT_EQUAL_INT(DISPATCH_OK, status);
     TEST_ASSERT_EQUAL_INT(INVOKERET_I64, ret.type);
     TEST_ASSERT_EQUAL_INT64(30, ret.i64);
@@ -945,11 +935,8 @@ void test_pipeline_queue_decoupled(void)
     cmd_entry_t popped_entry;
     TEST_ASSERT_EQUAL_INT(CMDQUEUE_OK, cmd_queue_pop(&queue, &popped_entry));
 
-    cmd_args_t args;
-    cmd_parse(&popped_entry, &args);
-
     invoke_ret_t ret;
-    dispatch_status_t status = invoke_call(&invoke_dispatcher, &args, &ret);
+    dispatch_status_t status = invoke_call(&invoke_dispatcher, &popped_entry, &ret);
     TEST_ASSERT_EQUAL_INT(DISPATCH_OK, status);
     TEST_ASSERT_EQUAL_INT(INVOKERET_I64, ret.type);
     TEST_ASSERT_EQUAL_INT64(300, ret.i64);
@@ -986,11 +973,8 @@ void test_e2e_ringbuf_wrap_around_pipeline(void)
     cmd_entry_t popped_entry;
     TEST_ASSERT_EQUAL_INT(CMDQUEUE_OK, cmd_queue_pop(&queue, &popped_entry));
 
-    cmd_args_t args;
-    TEST_ASSERT_EQUAL_UINT8(2, cmd_parse(&popped_entry, &args));
-
     invoke_ret_t ret;
-    dispatch_status_t status = invoke_call(&invoke_dispatcher, &args, &ret);
+    dispatch_status_t status = invoke_call(&invoke_dispatcher, &popped_entry, &ret);
     TEST_ASSERT_EQUAL_INT(DISPATCH_OK, status);
     TEST_ASSERT_EQUAL_INT(INVOKERET_I64, ret.type);
     TEST_ASSERT_EQUAL_INT64(30, ret.i64);
@@ -1020,11 +1004,8 @@ void test_e2e_ringbuf_multi_round_wrap_around(void)
         cmd_entry_t entry;
         TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, cmd_scan(&scanner, &entry));
 
-        cmd_args_t args;
-        TEST_ASSERT_EQUAL_UINT8(2, cmd_parse(&entry, &args));
-
         invoke_ret_t ret;
-        dispatch_status_t status = invoke_call(&invoke_dispatcher, &args, &ret);
+        dispatch_status_t status = invoke_call(&invoke_dispatcher, &entry, &ret);
         TEST_ASSERT_EQUAL_INT(DISPATCH_OK, status);
         TEST_ASSERT_EQUAL_INT(INVOKERET_I64, ret.type);
         TEST_ASSERT_EQUAL_INT64(i + 50, ret.i64);
@@ -1082,13 +1063,9 @@ void test_e2e_cmdqueue_multi_push_pop_wrap_around(void)
         cmd_entry_t popped;
         TEST_ASSERT_EQUAL_INT(CMDQUEUE_OK, cmd_queue_pop(&queue, &popped));
 
-        /* 解析 */
-        cmd_args_t args;
-        TEST_ASSERT_EQUAL_UINT8(2, cmd_parse(&popped, &args));
-
         /* 调用 */
         invoke_ret_t ret;
-        dispatch_status_t status = invoke_call(&invoke_dispatcher, &args, &ret);
+        dispatch_status_t status = invoke_call(&invoke_dispatcher, &popped, &ret);
         TEST_ASSERT_EQUAL_INT(DISPATCH_OK, status);
         TEST_ASSERT_EQUAL_INT(INVOKERET_I64, ret.type);
         TEST_ASSERT_EQUAL_INT64(i + 200, ret.i64);

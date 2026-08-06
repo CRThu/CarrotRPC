@@ -40,11 +40,7 @@ static dispatch_status_t run_pipeline(const char* buf, uint16_t len)
     while (!cmd_queue_is_empty(&queue))
     {
         cmd_queue_pop(&queue, &entry);
-
-        cmd_args_t result;
-        cmd_parse(&entry, &result);
-
-        last_status = invoke_call(&invoke_dispatcher, &result, NULL);
+        last_status = invoke_call(&invoke_dispatcher, &entry, NULL);
     }
 
     return last_status;
@@ -64,20 +60,17 @@ void test_icall_null_result(void)
 void test_icall_null_func_name(void)
 {
     invoke_setUp();
-    cmd_args_t result;
-    memset(&result, 0, sizeof(result));
-    dispatch_status_t s = invoke_call(&invoke_dispatcher, &result, NULL);
+    cmd_entry_t entry;
+    memset(&entry, 0, sizeof(entry));
+    dispatch_status_t s = invoke_call(&invoke_dispatcher, &entry, NULL);
     TEST_ASSERT_EQUAL_INT(DISPATCH_ERR_NULL, s);
 }
 
 void test_icall_func_not_found(void)
 {
     invoke_setUp();
-    cmd_args_t result;
-    memset(&result, 0, sizeof(result));
-    result.func_name = "nonexistent";
-    result.func_name_len = strlen("nonexistent");
-    dispatch_status_t s = invoke_call(&invoke_dispatcher, &result, NULL);
+    cmd_entry_t entry = cmd_entry_from_str("nonexistent()", 13);
+    dispatch_status_t s = invoke_call(&invoke_dispatcher, &entry, NULL);
     TEST_ASSERT_EQUAL_INT(DISPATCH_ERR_NOT_FOUND, s);
 }
 
@@ -88,13 +81,8 @@ void test_icall_func_not_found(void)
 void test_icall_hello(void)
 {
     invoke_setUp();
-    cmd_args_t result;
-    memset(&result, 0, sizeof(result));
-    result.func_name = "hello";
-    result.func_name_len = 5;
-    result.args_count = 0;
-
-    dispatch_status_t s = invoke_call(&invoke_dispatcher, &result, NULL);
+    cmd_entry_t entry = cmd_entry_from_str("hello()", 7);
+    dispatch_status_t s = invoke_call(&invoke_dispatcher, &entry, NULL);
     TEST_ASSERT_EQUAL_INT(DISPATCH_OK, s);
     TEST_ASSERT_EQUAL_INT(1, invoke_mock_hello_fake.call_count);
 }
@@ -106,15 +94,8 @@ void test_icall_hello(void)
 void test_icall_dec_positive(void)
 {
     invoke_setUp();
-    cmd_args_t result;
-    memset(&result, 0, sizeof(result));
-    result.func_name = "dec";
-    result.func_name_len = 3;
-    result.args[0].ptr = "42";
-    result.args[0].len = 2;
-    result.args_count = 1;
-
-    dispatch_status_t s = invoke_call(&invoke_dispatcher, &result, NULL);
+    cmd_entry_t entry = cmd_entry_from_str("dec(42)", 7);
+    dispatch_status_t s = invoke_call(&invoke_dispatcher, &entry, NULL);
     TEST_ASSERT_EQUAL_INT(DISPATCH_OK, s);
     TEST_ASSERT_EQUAL_INT(1, invoke_mock_dec_fake.call_count);
 
@@ -126,15 +107,8 @@ void test_icall_dec_positive(void)
 void test_icall_dec_negative(void)
 {
     invoke_setUp();
-    cmd_args_t result;
-    memset(&result, 0, sizeof(result));
-    result.func_name = "dec";
-    result.func_name_len = 3;
-    result.args[0].ptr = "-100";
-    result.args[0].len = 4;
-    result.args_count = 1;
-
-    dispatch_status_t s = invoke_call(&invoke_dispatcher, &result, NULL);
+    cmd_entry_t entry = cmd_entry_from_str("dec(-100)", 9);
+    dispatch_status_t s = invoke_call(&invoke_dispatcher, &entry, NULL);
     TEST_ASSERT_EQUAL_INT(DISPATCH_OK, s);
     int64_t val = *(int64_t*)invoke_mock_dec_fake.arg0_val;
     TEST_ASSERT_EQUAL_INT64(-100, val);
@@ -143,15 +117,8 @@ void test_icall_dec_negative(void)
 void test_icall_dec_zero(void)
 {
     invoke_setUp();
-    cmd_args_t result;
-    memset(&result, 0, sizeof(result));
-    result.func_name = "dec";
-    result.func_name_len = 3;
-    result.args[0].ptr = "0";
-    result.args[0].len = 1;
-    result.args_count = 1;
-
-    dispatch_status_t s = invoke_call(&invoke_dispatcher, &result, NULL);
+    cmd_entry_t entry = cmd_entry_from_str("dec(0)", 6);
+    dispatch_status_t s = invoke_call(&invoke_dispatcher, &entry, NULL);
     TEST_ASSERT_EQUAL_INT(DISPATCH_OK, s);
     int64_t val = *(int64_t*)invoke_mock_dec_fake.arg0_val;
     TEST_ASSERT_EQUAL_INT64(0, val);
@@ -164,15 +131,8 @@ void test_icall_dec_zero(void)
 void test_icall_hex_basic(void)
 {
     invoke_setUp();
-    cmd_args_t result;
-    memset(&result, 0, sizeof(result));
-    result.func_name = "hex";
-    result.func_name_len = 3;
-    result.args[0].ptr = "FF";
-    result.args[0].len = 2;
-    result.args_count = 1;
-
-    dispatch_status_t s = invoke_call(&invoke_dispatcher, &result, NULL);
+    cmd_entry_t entry = cmd_entry_from_str("hex(FF)", 7);
+    dispatch_status_t s = invoke_call(&invoke_dispatcher, &entry, NULL);
     TEST_ASSERT_EQUAL_INT(DISPATCH_OK, s);
     uint64_t val = *(uint64_t*)invoke_mock_hex_fake.arg0_val;
     TEST_ASSERT_EQUAL_HEX64(0xFF, val);
@@ -181,15 +141,8 @@ void test_icall_hex_basic(void)
 void test_icall_hex_with_prefix(void)
 {
     invoke_setUp();
-    cmd_args_t result;
-    memset(&result, 0, sizeof(result));
-    result.func_name = "hex";
-    result.func_name_len = 3;
-    result.args[0].ptr = "0xDEAD";
-    result.args[0].len = 6;
-    result.args_count = 1;
-
-    dispatch_status_t s = invoke_call(&invoke_dispatcher, &result, NULL);
+    cmd_entry_t entry = cmd_entry_from_str("hex(0xDEAD)", 11);
+    dispatch_status_t s = invoke_call(&invoke_dispatcher, &entry, NULL);
     TEST_ASSERT_EQUAL_INT(DISPATCH_OK, s);
     uint64_t val = *(uint64_t*)invoke_mock_hex_fake.arg0_val;
     TEST_ASSERT_EQUAL_HEX64(0xDEAD, val);
@@ -202,15 +155,8 @@ void test_icall_hex_with_prefix(void)
 void test_icall_string_basic(void)
 {
     invoke_setUp();
-    cmd_args_t result;
-    memset(&result, 0, sizeof(result));
-    result.func_name = "str";
-    result.func_name_len = 3;
-    result.args[0].ptr = "hello";
-    result.args[0].len = 5;
-    result.args_count = 1;
-
-    dispatch_status_t s = invoke_call(&invoke_dispatcher, &result, NULL);
+    cmd_entry_t entry = cmd_entry_from_str("str(hello)", 10);
+    dispatch_status_t s = invoke_call(&invoke_dispatcher, &entry, NULL);
     TEST_ASSERT_EQUAL_INT(DISPATCH_OK, s);
 
     /* p[i] points to null-terminated str_buf — single dereference */
@@ -225,18 +171,9 @@ void test_icall_string_basic(void)
 void test_icall_add(void)
 {
     invoke_setUp();
-    cmd_args_t result;
-    memset(&result, 0, sizeof(result));
-    result.func_name = "add";
-    result.func_name_len = 3;
-    result.args[0].ptr = "10";
-    result.args[0].len = 2;
-    result.args[1].ptr = "20";
-    result.args[1].len = 2;
-    result.args_count = 2;
-
+    cmd_entry_t entry = cmd_entry_from_str("add(10, 20)", 11);
     invoke_ret_t ret;
-    dispatch_status_t s = invoke_call(&invoke_dispatcher, &result, &ret);
+    dispatch_status_t s = invoke_call(&invoke_dispatcher, &entry, &ret);
     TEST_ASSERT_EQUAL_INT(DISPATCH_OK, s);
     TEST_ASSERT_EQUAL_INT(1, invoke_mock_add_fake.call_count);
 
@@ -253,19 +190,8 @@ void test_icall_add(void)
 void test_icall_3strings(void)
 {
     invoke_setUp();
-    cmd_args_t result;
-    memset(&result, 0, sizeof(result));
-    result.func_name = "args";
-    result.func_name_len = 4;
-    result.args[0].ptr = "alpha";
-    result.args[0].len = 5;
-    result.args[1].ptr = "beta";
-    result.args[1].len = 4;
-    result.args[2].ptr = "gamma";
-    result.args[2].len = 5;
-    result.args_count = 3;
-
-    dispatch_status_t s = invoke_call(&invoke_dispatcher, &result, NULL);
+    cmd_entry_t entry = cmd_entry_from_str("args(alpha, beta, gamma)", 24);
+    dispatch_status_t s = invoke_call(&invoke_dispatcher, &entry, NULL);
     TEST_ASSERT_EQUAL_INT(DISPATCH_OK, s);
     TEST_ASSERT_EQUAL_INT(1, invoke_mock_args_fake.call_count);
 
@@ -284,15 +210,8 @@ void test_icall_3strings(void)
 void test_icall_arg_mismatch_too_many(void)
 {
     invoke_setUp();
-    cmd_args_t result;
-    memset(&result, 0, sizeof(result));
-    result.func_name = "hello";  /* 0 args expected */
-    result.func_name_len = 5;
-    result.args[0].ptr = "extra";
-    result.args[0].len = 5;
-    result.args_count = 1;
-
-    dispatch_status_t s = invoke_call(&invoke_dispatcher, &result, NULL);
+    cmd_entry_t entry = cmd_entry_from_str("hello(extra)", 12);
+    dispatch_status_t s = invoke_call(&invoke_dispatcher, &entry, NULL);
     TEST_ASSERT_EQUAL_INT(DISPATCH_ERR_SIG, s);
     TEST_ASSERT_EQUAL_INT(0, invoke_mock_hello_fake.call_count);
 }
@@ -300,15 +219,8 @@ void test_icall_arg_mismatch_too_many(void)
 void test_icall_arg_mismatch_too_few(void)
 {
     invoke_setUp();
-    cmd_args_t result;
-    memset(&result, 0, sizeof(result));
-    result.func_name = "add";  /* 2 args expected */
-    result.func_name_len = 3;
-    result.args[0].ptr = "10";
-    result.args[0].len = 2;
-    result.args_count = 1;
-
-    dispatch_status_t s = invoke_call(&invoke_dispatcher, &result, NULL);
+    cmd_entry_t entry = cmd_entry_from_str("add(10)", 7);
+    dispatch_status_t s = invoke_call(&invoke_dispatcher, &entry, NULL);
     TEST_ASSERT_EQUAL_INT(DISPATCH_ERR_SIG, s);
     TEST_ASSERT_EQUAL_INT(0, invoke_mock_add_fake.call_count);
 }
@@ -320,15 +232,10 @@ void test_icall_arg_mismatch_too_few(void)
 void test_icall_ret_none(void)
 {
     invoke_setUp();
-    cmd_args_t result;
-    memset(&result, 0, sizeof(result));
-    result.func_name = "hello";
-    result.func_name_len = 5;
-    result.args_count = 0;
-
+    cmd_entry_t entry = cmd_entry_from_str("hello()", 7);
     invoke_ret_t ret;
     ret.type = INVOKERET_STR;  /* sentinel */
-    dispatch_status_t s = invoke_call(&invoke_dispatcher, &result, &ret);
+    dispatch_status_t s = invoke_call(&invoke_dispatcher, &entry, &ret);
     TEST_ASSERT_EQUAL_INT(DISPATCH_OK, s);
     TEST_ASSERT_EQUAL_INT(INVOKERET_NONE, ret.type);
 }
@@ -336,18 +243,9 @@ void test_icall_ret_none(void)
 void test_icall_ret_i64(void)
 {
     invoke_setUp();
-    cmd_args_t result;
-    memset(&result, 0, sizeof(result));
-    result.func_name = "add";
-    result.func_name_len = 3;
-    result.args[0].ptr = "3";
-    result.args[0].len = 1;
-    result.args[1].ptr = "7";
-    result.args[1].len = 1;
-    result.args_count = 2;
-
+    cmd_entry_t entry = cmd_entry_from_str("add(3, 7)", 9);
     invoke_ret_t ret;
-    dispatch_status_t s = invoke_call(&invoke_dispatcher, &result, &ret);
+    dispatch_status_t s = invoke_call(&invoke_dispatcher, &entry, &ret);
     TEST_ASSERT_EQUAL_INT(DISPATCH_OK, s);
     TEST_ASSERT_EQUAL_INT(INVOKERET_I64, ret.type);
     /* mock_add returns 0 by default (fff init), but ret type is correct */
