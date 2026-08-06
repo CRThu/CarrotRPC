@@ -93,7 +93,7 @@ void cmd_reset(cmd_scanner_t* scanner)
 
 cmd_status_t cmd_scan(cmd_scanner_t* scanner, cmd_entry_t* entry)
 {
-    if (scanner == NULL || entry == NULL || scanner->buf == NULL)
+    if (scanner == NULL || entry == NULL || scanner->buf == NULL || scanner->buf_size == 0)
         return CMD_ERROR;
 
     entry->buf = scanner->buf;
@@ -102,9 +102,42 @@ cmd_status_t cmd_scan(cmd_scanner_t* scanner, cmd_entry_t* entry)
     entry->cmd_len = 0;
     entry->func_len = 0;
 
-    while (scanner->scan_pos < scanner->buf_size)
+    uint16_t max_scan_bytes = 0;
+
+    if (scanner->ring != NULL)
     {
-        char c = (char)scanner->buf[scanner->scan_pos];
+        /* 环形缓冲区模式：实时查询可读字节数（若开启 DMA，内部自动拉取 DMA RX 位置） */
+        uint16_t readable = ringbuf_readable(scanner->ring);
+
+        /* 若外部消费了 ringbuf (tail 推进)，同步重置 scan_pos */
+        if (scanner->scan_pos < scanner->ring->tail)
+        {
+            scanner->scan_pos = scanner->ring->tail;
+            scanner->cmd_start = scanner->scan_pos;
+        }
+
+        uint16_t inspected = scanner->scan_pos - scanner->ring->tail;
+        if (inspected >= readable)
+        {
+            return CMD_INCOMPLETE;
+        }
+        max_scan_bytes = readable - inspected;
+    }
+    else
+    {
+        /* 线性缓冲区模式：可读范围到 buf_size 截止 */
+        if (scanner->scan_pos >= scanner->buf_size)
+        {
+            return CMD_INCOMPLETE;
+        }
+        max_scan_bytes = scanner->buf_size - scanner->scan_pos;
+    }
+
+    uint16_t scanned_cnt = 0;
+    while (scanned_cnt < max_scan_bytes)
+    {
+        uint16_t phys_pos = (scanner->ring != NULL) ? (scanner->scan_pos % scanner->buf_size) : scanner->scan_pos;
+        char c = (char)scanner->buf[phys_pos];
 
         switch (scanner->state)
         {
@@ -113,6 +146,7 @@ cmd_status_t cmd_scan(cmd_scanner_t* scanner, cmd_entry_t* entry)
             if (is_space(c) || is_terminator(c) || is_separator(c))
             {
                 scanner->scan_pos++;
+                scanned_cnt++;
                 break;
             }
             /* 遇到有效命令首字符 */
@@ -138,6 +172,7 @@ cmd_status_t cmd_scan(cmd_scanner_t* scanner, cmd_entry_t* entry)
                 scanner->func_len = (uint8_t)(scanner->scan_pos - scanner->cmd_start);
                 scanner->state = CMD_STATE_PAREN_ARGS;
                 scanner->scan_pos++;
+                scanned_cnt++;
             }
             else if (is_space(c))
             {
@@ -145,10 +180,12 @@ cmd_status_t cmd_scan(cmd_scanner_t* scanner, cmd_entry_t* entry)
                 scanner->func_len = (uint8_t)(scanner->scan_pos - scanner->cmd_start);
                 scanner->state = CMD_STATE_SPACE_ARGS;
                 scanner->scan_pos++;
+                scanned_cnt++;
             }
             else
             {
                 scanner->scan_pos++;
+                scanned_cnt++;
             }
             break;
 
@@ -167,22 +204,26 @@ cmd_status_t cmd_scan(cmd_scanner_t* scanner, cmd_entry_t* entry)
             {
                 /* 遇到右括号 ')'，带括号命令成帧完成 */
                 scanner->scan_pos++; /* 跳过 ')' */
+                scanned_cnt++;
                 entry->cmd_start = scanner->cmd_start;
                 entry->cmd_len = scanner->scan_pos - scanner->cmd_start;
                 entry->func_len = scanner->func_len;
 
                 /* 跳过尾随的分隔符、空白或终止符 */
-                while (scanner->scan_pos < scanner->buf_size)
+                while (scanned_cnt < max_scan_bytes)
                 {
-                    char c2 = (char)scanner->buf[scanner->scan_pos];
+                    uint16_t next_phys = (scanner->ring != NULL) ? (scanner->scan_pos % scanner->buf_size) : scanner->scan_pos;
+                    char c2 = (char)scanner->buf[next_phys];
                     if (is_terminator(c2) || is_separator(c2))
                     {
                         scanner->scan_pos++; /* 跳过终止符/分隔符 */
+                        scanned_cnt++;
                         break;
                     }
                     if (is_space(c2))
                     {
                         scanner->scan_pos++;
+                        scanned_cnt++;
                     }
                     else
                     {
@@ -196,6 +237,7 @@ cmd_status_t cmd_scan(cmd_scanner_t* scanner, cmd_entry_t* entry)
             else
             {
                 scanner->scan_pos++;
+                scanned_cnt++;
             }
             break;
 
@@ -212,6 +254,7 @@ cmd_status_t cmd_scan(cmd_scanner_t* scanner, cmd_entry_t* entry)
             else
             {
                 scanner->scan_pos++;
+                scanned_cnt++;
             }
             break;
         }
@@ -222,71 +265,38 @@ cmd_status_t cmd_scan(cmd_scanner_t* scanner, cmd_entry_t* entry)
 }
 
 /*=============================================================
- * 参数解析 API（零拷贝）
+ * 参数解析 API（零拷贝 + 环形回绕安全）
  *=============================================================*/
 
 /**
- * @brief 跳过空白字符
+ * @brief 安全获取 entry 中相较 cmd_start 的第 offset 个字符（考虑 ringbuf 取模回绕）
  */
-static const char* skip_space(const char* p, uint16_t len, uint16_t* pos)
+static inline char get_entry_char(const cmd_entry_t* entry, uint16_t offset)
 {
-    while (*pos < len && is_space(p[*pos]))
+    if (entry->buf_len > 0)
     {
-        (*pos)++;
+        uint16_t pos = (uint16_t)((entry->cmd_start + offset) % entry->buf_len);
+        return (char)entry->buf[pos];
     }
-    return p;
+    return (char)entry->buf[entry->cmd_start + offset];
 }
 
 /**
- * @brief 计算 token 长度（直到遇到分隔符或空白）
+ * @brief 获取 entry 中相较 cmd_start 的第 offset 个字符在 buf 中的绝对指针
  */
-static uint16_t token_len(const char* p, uint16_t len, uint16_t start)
+static inline const char* get_entry_ptr(const cmd_entry_t* entry, uint16_t offset)
 {
-    uint16_t i = start;
-
-    while (i < len)
+    if (entry->buf_len > 0)
     {
-        char c = p[i];
-
-        if (is_separator(c) || is_space(c) || is_right_bracket(c))
-        {
-            break;
-        }
-
-        i++;
+        uint16_t pos = (uint16_t)((entry->cmd_start + offset) % entry->buf_len);
+        return (const char*)&entry->buf[pos];
     }
-
-    return i - start;
+    return (const char*)&entry->buf[entry->cmd_start + offset];
 }
 
-/**
- * @brief 去除首尾空白
- */
-static void trim_token(const char* p, uint16_t len,
-                       const char** start, uint16_t* trim_len)
+uint8_t cmd_parse(const cmd_entry_t* entry, cmd_args_t* args)
 {
-    uint16_t i = 0;
-    uint16_t j = len;
-
-    /* 去除前导空白 */
-    while (i < j && is_space(p[i]))
-    {
-        i++;
-    }
-
-    /* 去除尾部空白 */
-    while (j > i && is_space(p[j - 1]))
-    {
-        j--;
-    }
-
-    *start = p + i;
-    *trim_len = j - i;
-}
-
-uint8_t cmd_parse(const char* cmd, uint16_t len, cmd_args_t* args)
-{
-    if (cmd == NULL || args == NULL || len == 0)
+    if (entry == NULL || args == NULL || entry->buf == NULL || entry->cmd_len == 0)
         return 0xFF; /* 错误 */
 
     /* 清空结果 */
@@ -294,14 +304,19 @@ uint8_t cmd_parse(const char* cmd, uint16_t len, cmd_args_t* args)
     args->func_name_len = 0;
     args->args_count = 0;
 
+    uint16_t len = entry->cmd_len;
     uint16_t pos = 0;
 
     /* 1. 跳过前导空白 */
-    skip_space(cmd, len, &pos);
+    while (pos < len && is_space(get_entry_char(entry, pos)))
+    {
+        pos++;
+    }
 
     /* 2. 解析函数名（遇到括号、空白、分隔符停止） */
     uint16_t name_start = pos;
-    while (pos < len && !is_left_bracket(cmd[pos]) && !is_space(cmd[pos]) && !is_separator(cmd[pos]))
+    while (pos < len && !is_left_bracket(get_entry_char(entry, pos)) &&
+           !is_space(get_entry_char(entry, pos)) && !is_separator(get_entry_char(entry, pos)))
     {
         pos++;
     }
@@ -309,54 +324,67 @@ uint8_t cmd_parse(const char* cmd, uint16_t len, cmd_args_t* args)
     if (pos == name_start)
         return 0xFF; /* 没有函数名 */
 
-    args->func_name = cmd + name_start;
+    args->func_name = get_entry_ptr(entry, name_start);
     args->func_name_len = pos - name_start;
 
     /* 3. 跳过函数名后的空白 */
-    skip_space(cmd, len, &pos);
+    while (pos < len && is_space(get_entry_char(entry, pos)))
+    {
+        pos++;
+    }
 
     /* 4. 检查是否有左括号 */
-    if (pos >= len || !is_left_bracket(cmd[pos]))
+    if (pos >= len || !is_left_bracket(get_entry_char(entry, pos)))
     {
         /* 无括号形式：检查是否有参数（空格分隔） */
-        if (pos < len && !is_terminator(cmd[pos]))
+        if (pos < len && !is_terminator(get_entry_char(entry, pos)))
         {
-            /* 有参数，解析空格分隔的参数 */
             uint8_t arg_idx = 0;
 
             while (pos < len && arg_idx < CMD_MAX_ARGS)
             {
                 /* 跳过参数前空白 */
-                skip_space(cmd, len, &pos);
+                while (pos < len && is_space(get_entry_char(entry, pos)))
+                {
+                    pos++;
+                }
 
-                /* 检查是否到达终止符 */
-                if (pos >= len || is_terminator(cmd[pos]))
+                if (pos >= len || is_terminator(get_entry_char(entry, pos)))
                 {
                     break;
                 }
 
                 /* 计算当前 token 长度 */
-                uint16_t t_len = token_len(cmd, len, pos);
+                uint16_t t_start = pos;
+                while (pos < len)
+                {
+                    char c = get_entry_char(entry, pos);
+                    if (is_separator(c) || is_space(c) || is_right_bracket(c))
+                    {
+                        break;
+                    }
+                    pos++;
+                }
+                uint16_t t_len = pos - t_start;
 
                 if (t_len > 0)
                 {
                     /* 去除首尾空白 */
-                    const char* token_start;
-                    uint16_t token_length;
-                    trim_token(cmd + pos, t_len, &token_start, &token_length);
+                    uint16_t i = 0, j = t_len;
+                    while (i < j && is_space(get_entry_char(entry, t_start + i))) i++;
+                    while (j > i && is_space(get_entry_char(entry, t_start + j - 1))) j--;
+                    uint16_t trim_len = j - i;
 
-                    if (token_length > 0)
+                    if (trim_len > 0)
                     {
-                        args->args[arg_idx].ptr = token_start;
-                        args->args[arg_idx].len = token_length;
+                        args->args[arg_idx].ptr = get_entry_ptr(entry, t_start + i);
+                        args->args[arg_idx].len = trim_len;
                         arg_idx++;
                     }
                 }
 
-                pos += t_len;
-
                 /* 跳过分隔符（逗号/分号） */
-                if (pos < len && is_separator(cmd[pos]))
+                if (pos < len && is_separator(get_entry_char(entry, pos)))
                 {
                     pos++;
                 }
@@ -372,48 +400,54 @@ uint8_t cmd_parse(const char* cmd, uint16_t len, cmd_args_t* args)
 
     pos++; /* 跳过左括号 */
 
-    /* 5. 解析参数 */
+    /* 5. 解析参数（带括号形式） */
     uint8_t arg_idx = 0;
 
     while (pos < len && arg_idx < CMD_MAX_ARGS)
     {
         /* 跳过参数前空白 */
-        skip_space(cmd, len, &pos);
-
-        /* 检查是否到达右括号 */
-        if (pos < len && is_right_bracket(cmd[pos]))
+        while (pos < len && is_space(get_entry_char(entry, pos)))
         {
-            break;
+            pos++;
         }
 
-        /* 检查是否到达终止符 */
-        if (pos < len && is_terminator(cmd[pos]))
+        /* 检查是否到达右括号或终止符 */
+        if (pos < len && (is_right_bracket(get_entry_char(entry, pos)) || is_terminator(get_entry_char(entry, pos))))
         {
             break;
         }
 
         /* 计算当前 token 长度 */
-        uint16_t t_len = token_len(cmd, len, pos);
+        uint16_t t_start = pos;
+        while (pos < len)
+        {
+            char c = get_entry_char(entry, pos);
+            if (is_separator(c) || is_space(c) || is_right_bracket(c))
+            {
+                break;
+            }
+            pos++;
+        }
+        uint16_t t_len = pos - t_start;
 
         if (t_len > 0)
         {
             /* 去除首尾空白 */
-            const char* token_start;
-            uint16_t token_length;
-            trim_token(cmd + pos, t_len, &token_start, &token_length);
+            uint16_t i = 0, j = t_len;
+            while (i < j && is_space(get_entry_char(entry, t_start + i))) i++;
+            while (j > i && is_space(get_entry_char(entry, t_start + j - 1))) j--;
+            uint16_t trim_len = j - i;
 
-            if (token_length > 0)
+            if (trim_len > 0)
             {
-                args->args[arg_idx].ptr = token_start;
-                args->args[arg_idx].len = token_length;
+                args->args[arg_idx].ptr = get_entry_ptr(entry, t_start + i);
+                args->args[arg_idx].len = trim_len;
                 arg_idx++;
             }
         }
 
-        pos += t_len;
-
         /* 跳过分隔符 */
-        if (pos < len && is_separator(cmd[pos]))
+        if (pos < len && is_separator(get_entry_char(entry, pos)))
         {
             pos++;
         }

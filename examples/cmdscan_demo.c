@@ -81,11 +81,7 @@ void demo_single_command(void)
 
         /* 解析参数 */
         cmd_args_t result;
-        uint8_t args_count = cmd_parse(
-            (const char*)(dma_buffer + entry.cmd_start),
-            entry.cmd_len,
-            &result
-        );
+        uint8_t args_count = cmd_parse(&entry, &result);
 
         printf("[PARSE] 函数名: %.*s\r\n", result.func_name_len, result.func_name);
         printf("[PARSE] 参数个数: %d\r\n", args_count);
@@ -131,11 +127,7 @@ void demo_multi_command(void)
 
         /* 解析参数 */
         cmd_args_t result;
-        uint8_t args_count = cmd_parse(
-            (const char*)(dma_buffer + entry.cmd_start),
-            entry.cmd_len,
-            &result
-        );
+        uint8_t args_count = cmd_parse(&entry, &result);
 
         printf("[PARSE]   函数: %.*s, 参数: %d\r\n",
                result.func_name_len, result.func_name, args_count);
@@ -184,11 +176,7 @@ void demo_incremental_receive(void)
 
         /* 解析参数 */
         cmd_args_t result;
-        uint8_t args_count = cmd_parse(
-            (const char*)(dma_buffer + entry.cmd_start),
-            entry.cmd_len,
-            &result
-        );
+        uint8_t args_count = cmd_parse(&entry, &result);
 
         printf("[PARSE] 函数名: %.*s\r\n", result.func_name_len, result.func_name);
         printf("[PARSE] 参数个数: %d\r\n", args_count);
@@ -213,7 +201,8 @@ void demo_zero_copy(void)
     
     /* 解析参数 */
     cmd_args_t result;
-    uint8_t args_count = cmd_parse(cmd_buf, cmd_len, &result);
+    cmd_entry_t e = { (const uint8_t*)cmd_buf, cmd_len, 0, cmd_len, 0 };
+    uint8_t args_count = cmd_parse(&e, &result);
     
     printf("[VERIFY] 原始缓冲区地址: %p\r\n", (void*)cmd_buf);
     printf("[VERIFY] 函数名指针: %p\r\n", (void*)result.func_name);
@@ -249,7 +238,8 @@ void demo_format_comparison(void)
     /* 测试有括号形式 */
     char cmd1[] = "print(123)";
     cmd_args_t result1;
-    uint8_t args1 = cmd_parse(cmd1, strlen(cmd1), &result1);
+    cmd_entry_t e1 = { (const uint8_t*)cmd1, (uint16_t)strlen(cmd1), 0, (uint16_t)strlen(cmd1), 0 };
+    uint8_t args1 = cmd_parse(&e1, &result1);
     printf("[FORMAT] print(123): 函数=%.*s, 参数=%d\r\n", 
            result1.func_name_len, result1.func_name, args1);
     if (args1 > 0) {
@@ -259,7 +249,8 @@ void demo_format_comparison(void)
     /* 测试无括号形式 */
     char cmd2[] = "print 456";
     cmd_args_t result2;
-    uint8_t args2 = cmd_parse(cmd2, strlen(cmd2), &result2);
+    cmd_entry_t e2 = { (const uint8_t*)cmd2, (uint16_t)strlen(cmd2), 0, (uint16_t)strlen(cmd2), 0 };
+    uint8_t args2 = cmd_parse(&e2, &result2);
     printf("[FORMAT] print 456: 函数=%.*s, 参数=%d\r\n",
            result2.func_name_len, result2.func_name, args2);
     if (args2 > 0) {
@@ -269,7 +260,8 @@ void demo_format_comparison(void)
     /* 测试多参数无括号形式 */
     char cmd3[] = "set 100 200 300";
     cmd_args_t result3;
-    uint8_t args3 = cmd_parse(cmd3, strlen(cmd3), &result3);
+    cmd_entry_t e3 = { (const uint8_t*)cmd3, (uint16_t)strlen(cmd3), 0, (uint16_t)strlen(cmd3), 0 };
+    uint8_t args3 = cmd_parse(&e3, &result3);
     printf("[FORMAT] set 100 200 300: 函数=%.*s, 参数=%d\r\n",
            result3.func_name_len, result3.func_name, args3);
     for (uint8_t i = 0; i < args3; i++) {

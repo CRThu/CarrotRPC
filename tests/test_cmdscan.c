@@ -154,7 +154,8 @@ void test_cmd_scan_multi_args_semicolon(void)
 void test_cmd_parse_no_args(void)
 {
     cmd_args_t result;
-    uint8_t count = cmd_parse("print", 5, &result);
+    cmd_entry_t e = { (const uint8_t*)"print", 5, 0, 5, 0 };
+    uint8_t count = cmd_parse(&e, &result);
 
     TEST_ASSERT_EQUAL_UINT8(0, count);
     TEST_ASSERT_EQUAL_UINT16(5, result.func_name_len);
@@ -164,7 +165,8 @@ void test_cmd_parse_no_args(void)
 void test_cmd_parse_with_parens(void)
 {
     cmd_args_t result;
-    uint8_t count = cmd_parse("print(1,2)", 10, &result);
+    cmd_entry_t e = { (const uint8_t*)"print(1,2)", 10, 0, 10, 0 };
+    uint8_t count = cmd_parse(&e, &result);
 
     TEST_ASSERT_EQUAL_UINT8(2, count);
     TEST_ASSERT_EQUAL_MEMORY("print", result.func_name, 5);
@@ -175,7 +177,8 @@ void test_cmd_parse_with_parens(void)
 void test_cmd_parse_space_separated(void)
 {
     cmd_args_t result;
-    uint8_t count = cmd_parse("print 1 2", 9, &result);
+    cmd_entry_t e = { (const uint8_t*)"print 1 2", 9, 0, 9, 0 };
+    uint8_t count = cmd_parse(&e, &result);
 
     TEST_ASSERT_EQUAL_UINT8(2, count);
     TEST_ASSERT_EQUAL_MEMORY("print", result.func_name, 5);
@@ -186,7 +189,8 @@ void test_cmd_parse_space_separated(void)
 void test_cmd_parse_semicolon_separated(void)
 {
     cmd_args_t result;
-    uint8_t count = cmd_parse("print;1;2", 9, &result);
+    cmd_entry_t e = { (const uint8_t*)"print;1;2", 9, 0, 9, 0 };
+    uint8_t count = cmd_parse(&e, &result);
 
     TEST_ASSERT_EQUAL_UINT8(2, count);
     TEST_ASSERT_EQUAL_MEMORY("print", result.func_name, 5);
@@ -197,7 +201,8 @@ void test_cmd_parse_semicolon_separated(void)
 void test_cmd_parse_with_spaces(void)
 {
     cmd_args_t result;
-    uint8_t count = cmd_parse("print( 1 , 2 )", 14, &result);
+    cmd_entry_t e = { (const uint8_t*)"print( 1 , 2 )", 14, 0, 14, 0 };
+    uint8_t count = cmd_parse(&e, &result);
 
     TEST_ASSERT_EQUAL_UINT8(2, count);
     TEST_ASSERT_EQUAL_MEMORY("1", result.args[0].ptr, result.args[0].len);
@@ -207,24 +212,68 @@ void test_cmd_parse_with_spaces(void)
 void test_cmd_parse_empty(void)
 {
     cmd_args_t result;
-    uint8_t count = cmd_parse("", 0, &result);
+    cmd_entry_t e = { (const uint8_t*)"", 0, 0, 0, 0 };
+    uint8_t count = cmd_parse(&e, &result);
     TEST_ASSERT_EQUAL_UINT8(0xFF, count);
 }
 
 void test_cmd_parse_null(void)
 {
-    uint8_t count = cmd_parse(NULL, 0, NULL);
+    uint8_t count = cmd_parse(NULL, NULL);
     TEST_ASSERT_EQUAL_UINT8(0xFF, count);
 }
 
 void test_cmd_parse_func_with_space(void)
 {
     cmd_args_t result;
-    uint8_t count = cmd_parse("print 123", 9, &result);
+    cmd_entry_t e = { (const uint8_t*)"print 123", 9, 0, 9, 0 };
+    uint8_t count = cmd_parse(&e, &result);
 
     TEST_ASSERT_EQUAL_UINT8(1, count);
     TEST_ASSERT_EQUAL_MEMORY("print", result.func_name, 5);
     TEST_ASSERT_EQUAL_MEMORY("123", result.args[0].ptr, result.args[0].len);
+}
+
+void test_cmd_parse_entry_with_offset(void)
+{
+    /* 缓冲区前面有 10 字节垃圾数据，cmd_start = 10 */
+    uint8_t buf[64] = "0123456789sub(50, 20)";
+    cmd_entry_t e = { buf, 64, 10, 11, 3 };
+    cmd_args_t result;
+    uint8_t count = cmd_parse(&e, &result);
+
+    TEST_ASSERT_EQUAL_UINT8(2, count);
+    TEST_ASSERT_EQUAL_UINT16(3, result.func_name_len);
+    TEST_ASSERT_EQUAL_MEMORY("sub", result.func_name, 3);
+    TEST_ASSERT_EQUAL_MEMORY("50", result.args[0].ptr, result.args[0].len);
+    TEST_ASSERT_EQUAL_MEMORY("20", result.args[1].ptr, result.args[1].len);
+}
+
+void test_cmd_parse_entry_max_args(void)
+{
+    /* 10 个参数极限值测试 */
+    const char* str = "fn(1,2,3,4,5,6,7,8,9,10)";
+    cmd_entry_t e = { (const uint8_t*)str, (uint16_t)strlen(str), 0, (uint16_t)strlen(str), 2 };
+    cmd_args_t result;
+    uint8_t count = cmd_parse(&e, &result);
+
+    TEST_ASSERT_EQUAL_UINT8(10, count);
+    TEST_ASSERT_EQUAL_MEMORY("1", result.args[0].ptr, result.args[0].len);
+    TEST_ASSERT_EQUAL_MEMORY("10", result.args[9].ptr, result.args[9].len);
+}
+
+void test_cmd_parse_entry_invalid_buf_or_len(void)
+{
+    cmd_args_t result;
+
+    /* buf 为 NULL */
+    cmd_entry_t e1 = { NULL, 10, 0, 5, 0 };
+    TEST_ASSERT_EQUAL_UINT8(0xFF, cmd_parse(&e1, &result));
+
+    /* cmd_len 为 0 */
+    uint8_t buf[10] = "test";
+    cmd_entry_t e2 = { buf, 10, 0, 0, 0 };
+    TEST_ASSERT_EQUAL_UINT8(0xFF, cmd_parse(&e2, &result));
 }
 
 /* ===== 零拷贝验证 ===== */
@@ -232,7 +281,8 @@ void test_cmd_zero_copy(void)
 {
     char buf[] = "print(1,2)";
     cmd_args_t result;
-    cmd_parse(buf, strlen(buf), &result);
+    cmd_entry_t e = { (const uint8_t*)buf, (uint16_t)strlen(buf), 0, (uint16_t)strlen(buf), 0 };
+    cmd_parse(&e, &result);
 
     /* 指针应指向原始缓冲区 */
     TEST_ASSERT_TRUE(result.func_name >= buf && result.func_name < buf + strlen(buf));
@@ -368,12 +418,24 @@ int run_cmdscan_tests(void)
     RUN_TEST(test_cmd_parse_null);
     RUN_TEST(test_cmd_parse_func_with_space);
 
+    /* cmd_entry 专属边界测试 */
+    void test_cmd_parse_entry_with_offset(void);
+    void test_cmd_parse_entry_max_args(void);
+    void test_cmd_parse_entry_invalid_buf_or_len(void);
+    RUN_TEST(test_cmd_parse_entry_with_offset);
+    RUN_TEST(test_cmd_parse_entry_max_args);
+    RUN_TEST(test_cmd_parse_entry_invalid_buf_or_len);
+
     /* 零拷贝 */
     RUN_TEST(test_cmd_zero_copy);
 
-    /* ringbuf 扫描 */
+    /* ringbuf 扫描与回绕 */
     void test_cmdscan_ringbuf_basic(void);
+    void test_cmdscan_ringbuf_empty_buffer_no_runaway(void);
+    void test_cmdscan_ringbuf_wrap_around_parse(void);
     RUN_TEST(test_cmdscan_ringbuf_basic);
+    RUN_TEST(test_cmdscan_ringbuf_empty_buffer_no_runaway);
+    RUN_TEST(test_cmdscan_ringbuf_wrap_around_parse);
 
     return UnityEnd();
 }
@@ -397,8 +459,63 @@ void test_cmdscan_ringbuf_basic(void)
     TEST_ASSERT_EQUAL_UINT16(10, entry.cmd_len);
 
     cmd_args_t args;
-    uint8_t count = cmd_parse((const char*)entry.buf + entry.cmd_start, entry.cmd_len, &args);
+    uint8_t count = cmd_parse(&entry, &args);
     TEST_ASSERT_EQUAL_UINT8(1, count);
     TEST_ASSERT_EQUAL_UINT16(5, args.func_name_len);
     TEST_ASSERT_EQUAL_UINT16(3, args.args[0].len);
+}
+
+void test_cmdscan_ringbuf_empty_buffer_no_runaway(void)
+{
+    memset(s_ring_buf, 0, sizeof(s_ring_buf));
+    ringbuf_init(&s_ring, s_ring_buf, sizeof(s_ring_buf));
+    cmd_init_ringbuf(&s_ring_scanner, &s_ring);
+
+    cmd_entry_t entry;
+    /* 空缓冲区下多次扫描，探查游标不应跑飞 */
+    for (int i = 0; i < 5; i++)
+    {
+        cmd_status_t st = cmd_scan(&s_ring_scanner, &entry);
+        TEST_ASSERT_EQUAL_INT(CMD_INCOMPLETE, st);
+        TEST_ASSERT_EQUAL_UINT16(0, s_ring_scanner.scan_pos);
+    }
+
+    /* 随后写入数据，应正常成帧 */
+    const char* str = "ping()\n";
+    ringbuf_write(&s_ring, (const uint8_t*)str, strlen(str));
+
+    cmd_status_t st = cmd_scan(&s_ring_scanner, &entry);
+    TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, st);
+    TEST_ASSERT_EQUAL_UINT16(6, entry.cmd_len);
+}
+
+void test_cmdscan_ringbuf_wrap_around_parse(void)
+{
+    /* 1. 构造一个 16 字节的 ringbuf，先把 tail 设为 12 (接近末尾) */
+    uint8_t ring_mem[16];
+    ringbuf_t ring;
+    ringbuf_init(&ring, ring_mem, 16);
+    ring.head = 12;
+    ring.tail = 12;
+
+    /* 2. 写入 "add(10, 20)\n" (12 字节)，将跨越 16 字节边界回绕到 0..7 */
+    const char* str = "add(10, 20)\n";
+    ringbuf_write(&ring, (const uint8_t*)str, strlen(str));
+
+    cmd_scanner_t scanner;
+    cmd_init_ringbuf(&scanner, &ring);
+
+    cmd_entry_t entry;
+    cmd_status_t st = cmd_scan(&scanner, &entry);
+    TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, st);
+    TEST_ASSERT_EQUAL_UINT16(12, entry.cmd_start); /* 起始位于 12 */
+    TEST_ASSERT_EQUAL_UINT16(11, entry.cmd_len);   /* "add(10, 20)" 长度 11 */
+
+    /* 3. 使用重构后的 cmd_parse 验证跨越回绕边界的安全切分 */
+    cmd_args_t args;
+    uint8_t count = cmd_parse(&entry, &args);
+    TEST_ASSERT_EQUAL_UINT8(2, count);
+    TEST_ASSERT_EQUAL_UINT16(3, args.func_name_len);
+    TEST_ASSERT_EQUAL_UINT16(2, args.args[0].len);
+    TEST_ASSERT_EQUAL_UINT16(2, args.args[1].len);
 }

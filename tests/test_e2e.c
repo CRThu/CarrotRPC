@@ -53,7 +53,7 @@ static dispatch_status_t parse_and_invoke(const char* cmd)
         cmd_queue_pop(&queue, &entry);
 
         cmd_args_t result;
-        cmd_parse((const char*)entry.buf + entry.cmd_start, entry.cmd_len, &result);
+        cmd_parse(&entry, &result);
 
         last_status = invoke_call(&invoke_dispatcher, &result, NULL);
     }
@@ -663,7 +663,7 @@ void test_e2e_streaming_chunked_pipeline(void)
     cmd_entry_t pop_entry;
     cmd_queue_pop(&queue, &pop_entry);
     cmd_args_t args;
-    cmd_parse((const char*)pop_entry.buf + pop_entry.cmd_start, pop_entry.cmd_len, &args);
+    cmd_parse(&pop_entry, &args);
 
     invoke_ret_t ret;
     dispatch_status_t status = invoke_call(&invoke_dispatcher, &args, &ret);
@@ -679,7 +679,7 @@ void test_e2e_streaming_chunked_pipeline(void)
 
     cmd_queue_push(&queue, &entry);
     cmd_queue_pop(&queue, &pop_entry);
-    cmd_parse((const char*)pop_entry.buf + pop_entry.cmd_start, pop_entry.cmd_len, &args);
+    cmd_parse(&pop_entry, &args);
 
     status = invoke_call(&invoke_dispatcher, &args, &ret);
     TEST_ASSERT_EQUAL_INT(DISPATCH_OK, status);
@@ -886,8 +886,14 @@ int run_e2e_tests(void)
     /* Group 12: Pipeline Integration */
     void test_pipeline_direct_bypass_queue(void);
     void test_pipeline_queue_decoupled(void);
+    void test_e2e_ringbuf_wrap_around_pipeline(void);
+    void test_e2e_ringbuf_multi_round_wrap_around(void);
+    void test_e2e_cmdqueue_multi_push_pop_wrap_around(void);
     RUN_TEST(test_pipeline_direct_bypass_queue);
     RUN_TEST(test_pipeline_queue_decoupled);
+    RUN_TEST(test_e2e_ringbuf_wrap_around_pipeline);
+    RUN_TEST(test_e2e_ringbuf_multi_round_wrap_around);
+    RUN_TEST(test_e2e_cmdqueue_multi_push_pop_wrap_around);
 
     return UNITY_END();
 }
@@ -910,7 +916,7 @@ void test_pipeline_direct_bypass_queue(void)
     TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, cmd_scan(&s_pipe_scanner, &entry));
 
     cmd_args_t args;
-    cmd_parse((const char*)entry.buf + entry.cmd_start, entry.cmd_len, &args);
+    cmd_parse(&entry, &args);
 
     invoke_ret_t ret;
     dispatch_status_t status = invoke_call(&invoke_dispatcher, &args, &ret);
@@ -940,12 +946,152 @@ void test_pipeline_queue_decoupled(void)
     TEST_ASSERT_EQUAL_INT(CMDQUEUE_OK, cmd_queue_pop(&queue, &popped_entry));
 
     cmd_args_t args;
-    cmd_parse((const char*)popped_entry.buf + popped_entry.cmd_start, popped_entry.cmd_len, &args);
+    cmd_parse(&popped_entry, &args);
 
     invoke_ret_t ret;
     dispatch_status_t status = invoke_call(&invoke_dispatcher, &args, &ret);
     TEST_ASSERT_EQUAL_INT(DISPATCH_OK, status);
     TEST_ASSERT_EQUAL_INT(INVOKERET_I64, ret.type);
     TEST_ASSERT_EQUAL_INT64(300, ret.i64);
+#endif
+}
+
+void test_e2e_ringbuf_wrap_around_pipeline(void)
+{
+    /* 16 字节容量 ringbuf，物理首尾回绕端到端管线测试 */
+    uint8_t ring_mem[16];
+    ringbuf_t ring;
+    ringbuf_init(&ring, ring_mem, 16);
+    ring.head = 12;
+    ring.tail = 12;
+
+    cmd_scanner_t scanner;
+    cmd_init_ringbuf(&scanner, &ring);
+
+    invoke_test_helpers_reset();
+
+#if RPC_USE_CMD_QUEUE
+    static uint8_t q_buf[512];
+    cmd_queue_t queue;
+    cmd_queue_init(&queue, q_buf, sizeof(q_buf));
+
+    /* 写入 12 字节 "add(10, 20)\n"，跨越 16 字节末尾回绕至头部 0..7 */
+    const char* cmd = "add(10, 20)\n";
+    ringbuf_write(&ring, (const uint8_t*)cmd, strlen(cmd));
+
+    cmd_entry_t entry;
+    TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, cmd_scan(&scanner, &entry));
+    TEST_ASSERT_EQUAL_INT(CMDQUEUE_OK, cmd_queue_push(&queue, &entry));
+
+    cmd_entry_t popped_entry;
+    TEST_ASSERT_EQUAL_INT(CMDQUEUE_OK, cmd_queue_pop(&queue, &popped_entry));
+
+    cmd_args_t args;
+    TEST_ASSERT_EQUAL_UINT8(2, cmd_parse(&popped_entry, &args));
+
+    invoke_ret_t ret;
+    dispatch_status_t status = invoke_call(&invoke_dispatcher, &args, &ret);
+    TEST_ASSERT_EQUAL_INT(DISPATCH_OK, status);
+    TEST_ASSERT_EQUAL_INT(INVOKERET_I64, ret.type);
+    TEST_ASSERT_EQUAL_INT64(30, ret.i64);
+#endif
+}
+
+void test_e2e_ringbuf_multi_round_wrap_around(void)
+{
+    /* 128 字节源 ringbuf，多次交替写入引发多次物理回绕 */
+    uint8_t src_mem[128];
+    ringbuf_t src_ring;
+    ringbuf_init(&src_ring, src_mem, sizeof(src_mem));
+
+    cmd_scanner_t scanner;
+    cmd_init_ringbuf(&scanner, &src_ring);
+
+    invoke_test_helpers_reset();
+
+    /* 进行 15 轮交替写入与扫描，让源 ringbuf 翻转回绕 */
+    for (int i = 1; i <= 15; i++)
+    {
+        char cmd_buf[32];
+        int len = snprintf(cmd_buf, sizeof(cmd_buf), "add(%d, 50)\n", i);
+
+        ringbuf_write(&src_ring, (const uint8_t*)cmd_buf, len);
+
+        cmd_entry_t entry;
+        TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, cmd_scan(&scanner, &entry));
+
+        cmd_args_t args;
+        TEST_ASSERT_EQUAL_UINT8(2, cmd_parse(&entry, &args));
+
+        invoke_ret_t ret;
+        dispatch_status_t status = invoke_call(&invoke_dispatcher, &args, &ret);
+        TEST_ASSERT_EQUAL_INT(DISPATCH_OK, status);
+        TEST_ASSERT_EQUAL_INT(INVOKERET_I64, ret.type);
+        TEST_ASSERT_EQUAL_INT64(i + 50, ret.i64);
+
+        /* 消费已处理数据并重置扫描器游标 */
+        uint16_t scan_phys = scanner.scan_pos % src_ring.size;
+        uint16_t consumed = (scan_phys >= src_ring.tail) ?
+            (scan_phys - src_ring.tail) :
+            (uint16_t)(scan_phys + src_ring.size - src_ring.tail);
+        ringbuf_skip(&src_ring, consumed);
+        cmd_reset(&scanner);
+    }
+}
+
+void test_e2e_cmdqueue_multi_push_pop_wrap_around(void)
+{
+    /* 128 字节源 ringbuf */
+    uint8_t src_mem[128];
+    ringbuf_t src_ring;
+    ringbuf_init(&src_ring, src_mem, sizeof(src_mem));
+
+    cmd_scanner_t scanner;
+    cmd_init_ringbuf(&scanner, &src_ring);
+
+    invoke_test_helpers_reset();
+
+#if RPC_USE_CMD_QUEUE
+    /* 128 字节队列内部 ringbuf，多次 push/pop 引发队列 items 与 ringbuf 滚动回绕 */
+    static uint8_t q_buf[128];
+    cmd_queue_t queue;
+    cmd_queue_init(&queue, q_buf, sizeof(q_buf));
+
+    /* 连续 15 轮 Push 和 Pop 交替滚动 */
+    for (int i = 1; i <= 15; i++)
+    {
+        char cmd_str[32];
+        int len = snprintf(cmd_str, sizeof(cmd_str), "add(%d, 200)\n", i);
+        ringbuf_write(&src_ring, (const uint8_t*)cmd_str, len);
+
+        cmd_entry_t entry;
+        TEST_ASSERT_EQUAL_INT(CMD_COMPLETE, cmd_scan(&scanner, &entry));
+
+        /* 入队 */
+        TEST_ASSERT_EQUAL_INT(CMDQUEUE_OK, cmd_queue_push(&queue, &entry));
+
+        /* 消费源 ringbuf 并重置扫描器 */
+        uint16_t scan_phys = scanner.scan_pos % src_ring.size;
+        uint16_t consumed = (scan_phys >= src_ring.tail) ?
+            (scan_phys - src_ring.tail) :
+            (uint16_t)(scan_phys + src_ring.size - src_ring.tail);
+        ringbuf_skip(&src_ring, consumed);
+        cmd_reset(&scanner);
+
+        /* 出队 */
+        cmd_entry_t popped;
+        TEST_ASSERT_EQUAL_INT(CMDQUEUE_OK, cmd_queue_pop(&queue, &popped));
+
+        /* 解析 */
+        cmd_args_t args;
+        TEST_ASSERT_EQUAL_UINT8(2, cmd_parse(&popped, &args));
+
+        /* 调用 */
+        invoke_ret_t ret;
+        dispatch_status_t status = invoke_call(&invoke_dispatcher, &args, &ret);
+        TEST_ASSERT_EQUAL_INT(DISPATCH_OK, status);
+        TEST_ASSERT_EQUAL_INT(INVOKERET_I64, ret.type);
+        TEST_ASSERT_EQUAL_INT64(i + 200, ret.i64);
+    }
 #endif
 }

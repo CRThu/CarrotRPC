@@ -80,12 +80,13 @@ CarrotRPC 是一个轻量级的 C 动态函数调用框架，用于通过字符�
   - 无内存复制 - 直接返回原始缓冲区指针
   - 扫描提取 + 零拷贝参数切分
   - 支持原生 `ringbuf_t` 探查回绕边界，无需 `linear_buf` 静态拉平
+  - **动态安全边界控制**: 在绑定 `ringbuf` 时依据 `ringbuf_readable()` 动态限制扫描上限，彻底防止空缓冲区游标越界跑飞（天然兼容 DMA RX 位置同步）
   - 无 std 库依赖 - 纯嵌入式友好
 - **关键结构**:
   - `cmd_scanner_t`: 扫描器上下文 (buf, buf_size, scan_pos, cmd_start, func_len, state)
   - `cmd_scan_state_t`: 增量解析状态机状态 (CMD_STATE_IDLE, FUNC_NAME, PAREN_ARGS, SPACE_ARGS)
   - `cmd_entry_t`: 命令条目（扫描提取结果，含 buf 指针、cmd_start、cmd_len、func_len）
-  - `cmd_args_t`: 参数切分结果（函数名指针 + 参数指针数组）
+  - `cmd_args_t`: 参数切分结果（函数名指针 + 参数指针数组，内置 wrap_buf 物理回绕安全缓冲）
   - `cmd_arg_t`: 参数指针 (ptr + len)
   - `cmd_status_t`: 扫描状态 (CMD_INCOMPLETE, CMD_COMPLETE, CMD_ERROR)
 - **核心 API**:
@@ -93,7 +94,7 @@ CarrotRPC 是一个轻量级的 C 动态函数调用框架，用于通过字符�
   - `cmd_init_ringbuf(scanner, ring)` - 初始化环形缓冲区扫描器 (无缝支持 ringbuf 自动消费)
   - `cmd_reset(scanner)` - 重置扫描器
   - `cmd_scan(scanner, &entry)` - 扫描提取单条命令边界 (支持线性/环形 buf)
-  - `cmd_parse(cmd, len, &args)` - 将完整命令解析为参数指针数组（零拷贝）
+  - `cmd_parse(&entry, &args)` - 将完整命令条目解析为参数指针数组（零拷贝 + 环形回绕安全）
   - `cmd_compare(a, a_len, b, b_len)` - 快速字节比较（尾部优先）
 
 ### 2. cmdqueue (命令队列)
@@ -194,13 +195,16 @@ CarrotRPC 是一个轻量级的 C 动态函数调用框架，用于通过字符�
   ```c
   #include "invoke.h"
   
-  cmd_args_t args;
-  cmd_parse(cmd, len, &args);
-  
-  invoke_ret_t ret;
-  dispatch_status_t s = invoke_call(&dispatcher, &args, &ret);
-  if (s == DISPATCH_OK && ret.type == INVOKERET_I64) {
-      printf("result: %ld\n", ret.i64);
+  cmd_entry_t entry;
+  if (cmd_scan(&scanner, &entry) == CMD_COMPLETE) {
+      cmd_args_t args;
+      cmd_parse(&entry, &args);
+
+      invoke_ret_t ret;
+      dispatch_status_t s = invoke_call(&dispatcher, &args, &ret);
+      if (s == DISPATCH_OK && ret.type == INVOKERET_I64) {
+          printf("result: %ld\n", ret.i64);
+      }
   }
   ```
 

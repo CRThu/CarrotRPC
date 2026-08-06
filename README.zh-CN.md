@@ -95,13 +95,20 @@ dispatch_reg(&dispatcher, add,    "add(i, i) -> i");
 rpc_info("system ready");
 rpc_error("arg mismatch: expected %d, got %d", 3, 2);
 
-/* 4. 解析并调用 */
-cmd_args_t args;
-cmd_parse("add(10, 20)", 12, &args);
+/* 4. 扫描、解析并调用 (标准管线) */
+uint8_t rx_buf[] = "add(10, 20)\n";
+cmd_scanner_t scanner;
+cmd_init(&scanner, rx_buf, sizeof(rx_buf) - 1);
 
-invoke_ret_t ret;
-dispatch_status_t s = invoke_call(&dispatcher, &args, &ret);
-// ret.i64 == 30
+cmd_entry_t entry;
+if (cmd_scan(&scanner, &entry) == CMD_COMPLETE) {
+    cmd_args_t args;
+    cmd_parse(&entry, &args);
+
+    invoke_ret_t ret;
+    dispatch_status_t s = invoke_call(&dispatcher, &args, &ret);
+    // s == DISPATCH_OK, ret.i64 == 30
+}
 ```
 
 ### 签名格式与注册类型
@@ -123,7 +130,7 @@ dispatch_status_t s = invoke_call(&dispatcher, &args, &ret);
 #### `cmdscan` (零拷贝命令解析器)
 * `cmd_init(scanner, buf, size)` / `cmd_init_ringbuf(scanner, ring)`：初始化线性/环形缓冲区扫描器上下文。
 * `cmd_scan(scanner, &entry)`：扫描单条命令边界（支持线性/环形 buf，成帧后自动从 ringbuf 消费已处理数据）。
-* `cmd_parse(cmd, len, &args)`：将命令字符串解析为参数指针数组（零拷贝）。
+* `cmd_parse(&entry, &args)`：将命令条目解析为参数指针数组（零拷贝 + 环形回绕安全）。
 
 #### `cmdqueue` (命令队列)
 * `cmd_queue_init(queue, buf, buf_size)`：使用外部传入内存缓冲区初始化队列。

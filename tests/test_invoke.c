@@ -42,7 +42,7 @@ static dispatch_status_t run_pipeline(const char* buf, uint16_t len)
         cmd_queue_pop(&queue, &entry);
 
         cmd_args_t result;
-        cmd_parse((const char*)entry.buf + entry.cmd_start, entry.cmd_len, &result);
+        cmd_parse(&entry, &result);
 
         last_status = invoke_call(&invoke_dispatcher, &result, NULL);
     }

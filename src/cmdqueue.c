@@ -27,8 +27,22 @@ cmd_queue_status_t cmd_queue_push(cmd_queue_t* queue, cmd_entry_t* entry)
     if (ringbuf_writable(&queue->ring) < entry->cmd_len)
         return CMDQUEUE_ERR_FULL;
 
-    const uint8_t* src = (const uint8_t*)&entry->buf[entry->cmd_start];
-    uint16_t written = ringbuf_write(&queue->ring, src, entry->cmd_len);
+    uint16_t written = 0;
+    if (entry->buf_len > 0 && (entry->cmd_start + entry->cmd_len) > entry->buf_len)
+    {
+        /* 跨越回绕边界：分两截复制写入 queue->ring */
+        uint16_t part1_len = entry->buf_len - entry->cmd_start;
+        uint16_t part2_len = entry->cmd_len - part1_len;
+
+        uint16_t w1 = ringbuf_write(&queue->ring, &entry->buf[entry->cmd_start], part1_len);
+        uint16_t w2 = ringbuf_write(&queue->ring, &entry->buf[0], part2_len);
+        written = w1 + w2;
+    }
+    else
+    {
+        const uint8_t* src = (const uint8_t*)&entry->buf[entry->cmd_start];
+        written = ringbuf_write(&queue->ring, src, entry->cmd_len);
+    }
 
     if (written != entry->cmd_len)
         return CMDQUEUE_ERR_FULL;

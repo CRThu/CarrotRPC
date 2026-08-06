@@ -250,7 +250,8 @@ void test_cmd_parse_still_works(void)
 {
     char cmd[] = "print(1,2)";
     cmd_args_t result;
-    uint8_t count = cmd_parse(cmd, strlen(cmd), &result);
+    cmd_entry_t e = { (const uint8_t*)cmd, (uint16_t)strlen(cmd), 0, (uint16_t)strlen(cmd), 0 };
+    uint8_t count = cmd_parse(&e, &result);
 
     TEST_ASSERT_EQUAL_UINT8(2, count);
     TEST_ASSERT_EQUAL_UINT8(5, result.func_name_len);

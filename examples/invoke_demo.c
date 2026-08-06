@@ -55,37 +55,44 @@ int main(void)
     /* 2. 调用无参无返回值函数 */
     printf("--- Call hello() ---\n");
     cmd_args_t args;
-    cmd_parse("hello()", 7, &args);
+    cmd_entry_t e;
+    e = cmd_entry_from_str("hello()", 7);
+    cmd_parse(&e, &args);
     s = invoke_call(&dispatcher, &args, &ret);
     printf("status=%d, ret_type=%d\n\n", s, ret.type);
 
     /* 3. 调用有返回值函数 */
     printf("--- Call add(10, 20) ---\n");
-    cmd_parse("add(10, 20)", 11, &args);
+    e = cmd_entry_from_str("add(10, 20)", 11);
+    cmd_parse(&e, &args);
     s = invoke_call(&dispatcher, &args, &ret);
     printf("status=%d, ret.i64=%lld\n\n", s, ret.i64);
 
     /* 4. 调用负数参数 */
     printf("--- Call add(-100, 50) ---\n");
-    cmd_parse("add(-100, 50)", 13, &args);
+    e = cmd_entry_from_str("add(-100, 50)", 13);
+    cmd_parse(&e, &args);
     s = invoke_call(&dispatcher, &args, &ret);
     printf("status=%d, ret.i64=%lld\n\n", s, ret.i64);
 
     /* 5. 调用单参数函数 */
     printf("--- Call LED_On(3) ---\n");
-    cmd_parse("LED_On(3)", 9, &args);
+    e = cmd_entry_from_str("LED_On(3)", 9);
+    cmd_parse(&e, &args);
     s = invoke_call(&dispatcher, &args, &ret);
     printf("status=%d\n\n", s);
 
     /* 6. 调用双参数函数 */
     printf("--- Call motor_set(1, 1000) ---\n");
-    cmd_parse("motor_set(1, 1000)", 18, &args);
+    e = cmd_entry_from_str("motor_set(1, 1000)", 18);
+    cmd_parse(&e, &args);
     s = invoke_call(&dispatcher, &args, &ret);
     printf("status=%d\n\n", s);
 
     /* 7. 调用不存在的函数 */
     printf("--- Call nonexistent() ---\n");
-    cmd_parse("nonexistent()", 13, &args);
+    e = cmd_entry_from_str("nonexistent()", 13);
+    cmd_parse(&e, &args);
     s = invoke_call(&dispatcher, &args, &ret);
     printf("status=%d (expected DISPATCH_ERR_NOT_FOUND)\n\n", s);
 
@@ -93,7 +100,8 @@ int main(void)
     printf("--- Full pipeline ---\n");
     const char* cmd = "add(100, 200)";
     printf("Input: '%s'\n", cmd);
-    cmd_parse(cmd, strlen(cmd), &args);
+    e = cmd_entry_from_str(cmd, strlen(cmd));
+    cmd_parse(&e, &args);
     printf("Parsed: func='%.*s', args_count=%d\n", args.func_name_len, args.func_name, args.args_count);
     s = invoke_call(&dispatcher, &args, &ret);
     printf("Result: status=%d, value=%lld\n", s, ret.i64);

@@ -118,16 +118,31 @@ void cmd_reset(cmd_scanner_t* scanner);
 cmd_status_t cmd_scan(cmd_scanner_t* scanner, cmd_entry_t* entry);
 
 /**
- * @brief 将完整命令解析为参数指针数组
+ * @brief 将完整命令条目解析为参数指针数组（零拷贝 + 环形回绕安全）
  *
- * 无内存复制 - 所有指针直接指向原始 cmd 缓冲区
+ * 无内存复制 - 所有指针直接指向 entry 对应的原始缓冲区，完美支持环形缓冲区回绕
  *
- * @param cmd 命令字符串指针
- * @param len 命令长度
- * @param args 输出：参数切分结果
+ * @param entry 输入：命令条目（来自 cmd_scan 或 cmd_queue_pop）
+ * @param args  输出：参数切分结果
  * @return uint8_t 解析出的参数个数，0 表示无参数，错误时返回 0xFF
  */
-uint8_t cmd_parse(const char* cmd, uint16_t len, cmd_args_t* args);
+uint8_t cmd_parse(const cmd_entry_t* entry, cmd_args_t* args);
+
+/**
+ * @brief 辅助构造函数：由字符串直接构造 cmd_entry_t
+ */
+static inline cmd_entry_t cmd_entry_from_str(const char* str, uint16_t len)
+{
+    cmd_entry_t e;
+    e.buf = (const uint8_t*)str;
+    e.buf_len = len;
+    e.cmd_start = 0;
+    e.cmd_len = len;
+    e.func_len = 0;
+    return e;
+}
+
+
 
 /**
  * @brief 快速字节比较 (尾部优先)

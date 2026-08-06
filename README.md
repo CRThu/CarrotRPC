@@ -95,13 +95,20 @@ dispatch_reg(&dispatcher, add,    "add(i, i) -> i");
 rpc_info("system ready");
 rpc_error("arg mismatch: expected %d, got %d", 3, 2);
 
-/* 4. Parse and invoke */
-cmd_args_t args;
-cmd_parse("add(10, 20)", 12, &args);
+/* 4. Scan, parse and invoke (Standard Pipeline) */
+uint8_t rx_buf[] = "add(10, 20)\n";
+cmd_scanner_t scanner;
+cmd_init(&scanner, rx_buf, sizeof(rx_buf) - 1);
 
-invoke_ret_t ret;
-dispatch_status_t s = invoke_call(&dispatcher, &args, &ret);
-// ret.i64 == 30
+cmd_entry_t entry;
+if (cmd_scan(&scanner, &entry) == CMD_COMPLETE) {
+    cmd_args_t args;
+    cmd_parse(&entry, &args);
+
+    invoke_ret_t ret;
+    dispatch_status_t s = invoke_call(&dispatcher, &args, &ret);
+    // s == DISPATCH_OK, ret.i64 == 30
+}
 ```
 
 ### Signature & Type Registration
@@ -123,7 +130,7 @@ Functions are registered dynamically using human-readable signatures: `"name(arg
 #### `cmdscan` (Zero-Copy Command Parser)
 * `cmd_init(scanner, buf, size)` / `cmd_init_ringbuf(scanner, ring)`: Initialize linear/ringbuf scanner context.
 * `cmd_scan(scanner, &entry)`: Scan for command boundary (supports linear/ringbuf, auto-consumes framed data from ringbuf).
-* `cmd_parse(cmd, len, &args)`: Parse command string into argument pointers array (zero-copy).
+* `cmd_parse(&entry, &args)`: Parse command entry into argument pointers array (zero-copy + wrap-around safe).
 
 #### `cmdqueue` (Command Queue)
 * `cmd_queue_init(queue, buf, buf_size)`: Initialize queue with external memory buffer.
